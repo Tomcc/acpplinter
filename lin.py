@@ -2,7 +2,7 @@ import re
 import os
 import shelve
 
-incremental = False
+incremental = True
 
 roots = [
 	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src",
@@ -108,7 +108,7 @@ def clean(buffer):
 	result = ""
 	
 	STATE_CODE = 0
-	STATE_COMMENT = 1
+	STATE_SKIP_LINE = 1
 	STATE_STRING = 2
 	STATE_MULTILINE = 3
 
@@ -119,36 +119,39 @@ def clean(buffer):
 		next = buffer[i+1]
 
 		if state == STATE_CODE:
-			if curr == '/' and next == '/':
-				state = STATE_COMMENT
+			if (curr == '/' and next == '/') or curr == '#':
+				state = STATE_SKIP_LINE
 			elif curr == '"':
 				state = STATE_STRING
 			elif curr == '/' and next == '*':
 				state = STATE_MULTILINE
 			else:
 				result += curr
-		elif state == STATE_COMMENT:
-			if curr == '\n':
+		elif state == STATE_SKIP_LINE:
+			if next == '\n':
 				state = STATE_CODE
 		elif state == STATE_MULTILINE:
 			if curr == '*' and next == '/':
 				state = STATE_CODE
-			elif curr == '\n':
+			elif next == '\n':
 				result += curr
 		elif state == STATE_STRING:
-			if curr == '"':
+			if next == '"':
 				state = STATE_CODE
 
 	return result
 
 
 def examine(path):
-	with open (path, "r") as myfile:
+	with open (path, "r", encoding='ascii') as myfile:
 		count = 0
 		allCommented = 0
 
-		buffer = clean(myfile.read())
-
+		try:
+			buffer = clean(myfile.read())
+		except UnicodeDecodeError as exc:
+			warn("Non-ASCII characters detected in source file", (path, 0, str(exc)))
+			return
 
 		for line in buffer.splitlines():
 
