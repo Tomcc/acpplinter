@@ -1,33 +1,15 @@
 import re
 import os
 import shelve
+import json
+import sys
+
+if len(sys.argv) != 2 or not os.path.isfile(sys.argv[1]):
+	print("Usage: py lin.py path/to/your/config.json")
+	exit(1)
 
 incremental = True
-
-roots = [
-	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src",
-	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Audio",
-	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Core",
-	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Input",
-	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Renderer" ]
-
-excludes = ["stb_", "utf8", "atomicops", "\.xaml\."]
-includes = [".cpp$", ".h$"]
-
-# roots = [
-# 	"C:/Users/Tommaso/DEV/dojo/src", 
-# 	"C:/Users/Tommaso/DEV/dojo/include",
-# 	 "C:/Users/Tommaso/DEV/dojo2D/src", 
-# 	 "C:/Users/Tommaso/DEV/dojo2D/include", 
-# 	 "C:/Users/Tommaso/DEV/the-scavenger/src"]
-
-# excludes = [
-# 	"\.xaml\.",
-# 	"lodepng",
-# 	"atomicops",
-# 	"Pipe.h",
-# 	"android_native_app_glue.h"
-# ]
+configPath = sys.argv[1]
 
 identifier = '[A-Za-z_][A-Za-z0-9_]*'
 typeName = '[A-Z_][A-Za-z0-9_]*'
@@ -61,14 +43,6 @@ constReferenceRegex = re.compile('const\s*&')
 dangerousForAutoRegex = re.compile('for\s*\(\s*auto\s+' + identifier + '\s*:')
 if0Regex = re.compile('#if\s+0')
 
-excludeFilters = []
-for exclude in excludes:
-	excludeFilters.append( re.compile(exclude) )
-
-includeFilters = []
-for include in includes:
-	includeFilters.append( re.compile(include) )
-
 warnings = {}
 
 def exclude(path):
@@ -83,7 +57,7 @@ def include(path):
 			return True
 	return False
 
-def checkChangedAndUpdate(path):
+def isChanged(path):
 	newDate = os.path.getmtime(path)
 
 	if incremental:
@@ -231,31 +205,59 @@ def examine(path):
 			if mutableRegex.search(line):
 				warn("Avoid using mutable, like const_cast", info)
 
+def openShelve(path):
+	try:
+		os.mkdir(path)
+	except:
+		pass
+	return shelve.open(path + "/files.db", 'c')
 
+def getKey(key, default):
+	try:
+		return config[key]
+	except:
+		return default
 
-dbPath = os.getenv('APPDATA') + "/acpplinter"
+with open(configPath) as configFile:
+	config = json.load(configFile)
 
-try:
-	os.mkdir(dbPath)
-except:
-	pass
+	excludeFilters = []
+	for e in config['excludes']:
+		excludeFilters.append( re.compile(e) )
 
-db = shelve.open(dbPath + "/files.db", 'c')
+	includeFilters = []
+	for i in config['includes']:
+		includeFilters.append( re.compile(i) )
 
-for root in roots:
-	for root, dirs, files in os.walk(root):
-		for file in files:
-			fullpath = os.path.join(root,file)
-			if include(fullpath) and not exclude(fullpath) and checkChangedAndUpdate(fullpath):
-				examine(fullpath)
+	incremental = getKey('incremental', False)
+	dbPath = getKey('dbpath', os.getenv('APPDATA') + "/acpplinter")
 
-db.close()
+with openShelve(dbPath) as db:
 
+	#always recheck everything if the config or this file changed
+	if incremental and isChanged(configPath) or isChanged(os.path.realpath(__file__)):
+		incremental = False
+
+	abspath = os.path.abspath(configPath)
+	workdir = abspath[:abspath.replace("\\","/").rfind('/')+1]
+	os.chdir(workdir)
+
+	for root in config['roots']:
+		print('Checking ' + root + '...')
+		for root, dirs, files in os.walk(root):
+			for file in files:
+				fullpath = os.path.join(root,file)
+				if include(fullpath) and not exclude(fullpath) and isChanged(fullpath):
+					examine(fullpath)
+
+count = 0
 for warningType in warnings.items():
-	print( "#### " + warningType[0])
+	print( "\n#### " + warningType[0])
 	print()
 	for detail in warningType[1]:
 		file = detail[0][detail[0].rfind('\\')+1:]
 		print("\t" + file + ":" + str(detail[1]) + "\t\t" + detail[2])
+		count += 1
 
-	print("\n\n")
+print("\nFound " + str(count) + " issues!\n")
+
