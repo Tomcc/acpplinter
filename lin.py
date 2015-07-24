@@ -1,5 +1,8 @@
 import re
 import os
+import shelve
+
+incremental = False
 
 roots = [
 	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src",
@@ -8,7 +11,8 @@ roots = [
 	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Input",
 	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Renderer" ]
 
-excludes = ["stb_", "utf8"]
+excludes = ["stb_", "utf8", "atomicops", "\.xaml\."]
+includes = [".cpp$", ".h$"]
 
 # roots = [
 # 	"C:/Users/Tommaso/DEV/dojo/src", 
@@ -61,6 +65,10 @@ excludeFilters = []
 for exclude in excludes:
 	excludeFilters.append( re.compile(exclude) )
 
+includeFilters = []
+for include in includes:
+	includeFilters.append( re.compile(include) )
+
 warnings = {}
 
 def exclude(path):
@@ -68,6 +76,26 @@ def exclude(path):
 		if filter.search(path):
 			return True
 	return False
+
+def include(path):
+	for filter in includeFilters:
+		if filter.search(path):
+			return True
+	return False
+
+def checkChangedAndUpdate(path):
+	newDate = os.path.getmtime(path)
+
+	if incremental:
+		try:
+			oldDate = db[path]
+			if newDate == oldDate:
+				return False
+		except:
+			pass
+
+	db[path] = newDate
+	return True
 
 
 def warn(msg, info):
@@ -200,12 +228,25 @@ def examine(path):
 			if mutableRegex.search(line):
 				warn("Avoid using mutable, like const_cast", info)
 
+
+
+dbPath = os.getenv('APPDATA') + "/acpplinter"
+
+try:
+	os.mkdir(dbPath)
+except:
+	pass
+
+db = shelve.open(dbPath + "/files.db", 'c')
+
 for root in roots:
 	for root, dirs, files in os.walk(root):
 		for file in files:
 			fullpath = os.path.join(root,file)
-			if (file.endswith('.cpp') or file.endswith('.h')) and not exclude(fullpath):
+			if include(fullpath) and not exclude(fullpath) and checkChangedAndUpdate(fullpath):
 				examine(fullpath)
+
+db.close()
 
 for warningType in warnings.items():
 	print( "#### " + warningType[0])
