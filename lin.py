@@ -1,0 +1,217 @@
+import re
+import os
+
+roots = [
+	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src",
+	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Audio",
+	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Core",
+	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Input",
+	"C:/Users/Tommaso/DEV/Minecraftpe-local/handheld/src-deps/Renderer" ]
+
+excludes = ["stb_", "utf8"]
+
+# roots = [
+# 	"C:/Users/Tommaso/DEV/dojo/src", 
+# 	"C:/Users/Tommaso/DEV/dojo/include",
+# 	 "C:/Users/Tommaso/DEV/dojo2D/src", 
+# 	 "C:/Users/Tommaso/DEV/dojo2D/include", 
+# 	 "C:/Users/Tommaso/DEV/the-scavenger/src"]
+
+# excludes = [
+# 	"\.xaml\.",
+# 	"lodepng",
+# 	"atomicops",
+# 	"Pipe.h",
+# 	"android_native_app_glue.h"
+# ]
+
+identifier = '[A-Za-z_][A-Za-z0-9_]*'
+typeName = '[A-Z_][A-Za-z0-9_]*'
+
+constructorRegEx = re.compile('^\s*' + typeName + '\(' + identifier + '[\*&]?\s*' + identifier + '\)\s*[{;]')
+newRegEx = re.compile('\s+new\s+')
+mallocRegex = re.compile('\s+malloc\s*\(.*\)\s*;')
+deleteRegex = re.compile('\s+delete\s+')
+allowedNewRegEx = re.compile('ref new\s+')
+longRegEx = re.compile('\s+long\s+')
+allowedLongRegex = re.compile('long double')
+longLongRegEx = re.compile('\s+long long\s+')
+constCastRegEx = re.compile('const_cast<.*>\(.*\)')
+dynamicCastRegEx = re.compile('dynamic_cast<.*>\(.*\)')
+stackRegEx = re.compile('std::stack')
+xyzRegEx = re.compile('int\s+x\s+,\s+int\s+y\s+,\s+int\s+z')
+xyzFloatRegEx = re.compile('float\s+x\s+,\s+float\s+y\s+,\s+float\s+z')
+uniqueRefRegEx = re.compile('\(.*Unique<[^>]*>&[^&]')
+commentBanner = re.compile('//--------')
+startsWithComment = re.compile('^\s*//')
+notUsingMakeShared1 = re.compile('shared_ptr<[^>]*>\(.*\)')
+notUsingMakeShared2 = re.compile('Shared<[^>]*>\(.*\)')
+volatileRegEx = re.compile('\s+volatile\s+')
+mutableRegex = re.compile('\s+mutable\s+')
+inlineRegEx = re.compile('\s+inline\s+')
+superUsageRegEx = re.compile('typedef.*super;')
+virtualInlineRegex1 = re.compile('virtual.*inline')
+virtualInlineRegex2 = re.compile('inline.*virtual')
+passingStringsViaCopyRegex = re.compile('\(.*std::string[^&,*]+' + identifier + '.*\)')
+constReferenceRegex = re.compile('const\s*&')
+dangerousForAutoRegex = re.compile('for\s*\(\s*auto\s+' + identifier + '\s*:')
+if0Regex = re.compile('#if\s+0')
+
+excludeFilters = []
+for exclude in excludes:
+	excludeFilters.append( re.compile(exclude) )
+
+warnings = {}
+
+def exclude(path):
+	for filter in excludeFilters:
+		if filter.search(path):
+			return True
+	return False
+
+
+def warn(msg, info):
+	if not msg in warnings:
+		warnings[msg] = []
+
+	warnings[msg].append(info)
+
+def clean(buffer):
+	result = ""
+	
+	STATE_CODE = 0
+	STATE_COMMENT = 1
+	STATE_STRING = 2
+	STATE_MULTILINE = 3
+
+	state = STATE_CODE
+
+	for i in range(0, len(buffer)-1):
+		curr = buffer[i]
+		next = buffer[i+1]
+
+		if state == STATE_CODE:
+			if curr == '/' and next == '/':
+				state = STATE_COMMENT
+			elif curr == '"':
+				state = STATE_STRING
+			elif curr == '/' and next == '*':
+				state = STATE_MULTILINE
+			else:
+				result += curr
+		elif state == STATE_COMMENT:
+			if curr == '\n':
+				state = STATE_CODE
+		elif state == STATE_MULTILINE:
+			if curr == '*' and next == '/':
+				state = STATE_CODE
+			elif curr == '\n':
+				result += curr
+		elif state == STATE_STRING:
+			if curr == '"':
+				state = STATE_CODE
+
+	return result
+
+
+def examine(path):
+	with open (path, "r") as myfile:
+		count = 0
+		allCommented = 0
+
+		buffer = clean(myfile.read())
+
+
+		for line in buffer.splitlines():
+
+			count += 1
+
+			# if startsWithComment.search(line):
+			# 	allCommented += 1
+			# 	if allCommented == 4:
+			# 		allCommented = 0
+			# 		warn("Suspect comment group, is it commented code?", info)
+			# 	continue
+			
+			# allCommented = 0
+
+			#add a tab at the start to make pre-whitespaces coherent
+			line = '\t' + line
+
+			info = (path, count, line)
+
+			isClassDefinition = path.endswith('.h') # TODO use a proper class declaration detection?
+
+			if isClassDefinition:
+				if constructorRegEx.search(line) and not '/*implicit*/' in line:
+					warn("Missing `explicit` keyword on possible conversion constructor", info)
+
+				if constReferenceRegex.search(line):
+					warn("Always place const before the type, pls!", info)
+				elif passingStringsViaCopyRegex.search(line):
+					warn("Passing strings via copy", info)
+
+			if (newRegEx.search(line) and not allowedNewRegEx.search(line)) or deleteRegex.search(line):
+				warn("Don't use new and delete, use a owning pointer or a container instead", info)
+
+			if mallocRegex.search(line):
+				warn("Don't use malloc(), try to use containers instead", info)
+
+			if longLongRegEx.search(line):
+				warn('Replace long long with int64_t', info)
+			elif longRegEx.search(line) and not allowedLongRegex.search(line):
+				warn('Use of inconsistent-length type long: use int64_t or int instead', info)
+
+			if constCastRegEx.search(line):
+				warn("Don't use const_cast, really :(", info)
+
+			if dynamicCastRegEx.search(line):
+				warn("dynamic_cast? RTTI is off!", info)
+
+			if stackRegEx.search(line):
+				warn("stack is non-contiguous and usually slower than a vector", info)
+
+			if xyzRegEx.search(line) or xyzFloatRegEx.search(line):
+				warn("Use a TilePos or a Vec3 instead", info)
+
+			if uniqueRefRegEx.search(line):
+				warn("Pass unique pointers by value, force the caller to move explicitly", info)
+
+			if commentBanner.search(line):
+				warn("Don't do comment banners pls", info)
+
+			if notUsingMakeShared1.search(line) or notUsingMakeShared2.search(line):
+				warn("Always create shared pointers through make_shared", info)
+
+			if volatileRegEx.search(line):
+				warn("volatile doesn't mean what you think it means, use std::atomic<>", info)
+
+			if virtualInlineRegex1.search(line) or virtualInlineRegex2.search(line):
+				warn("virtual negates inline unless LTO and devirtualization is on? Explicitly include the code in the header if LTO fails", info)
+			elif inlineRegEx.search(line):
+				warn("inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired", info)
+
+			if superUsageRegEx.search(line):
+				warn("Do not use super. It's a Java-ism that we're trying to get rid of", info)
+
+			if dangerousForAutoRegex.search(line) and not 'range' in line:
+				warn("Use plain for(auto : foo), always use for(auto&)! The first form can incur in lots of costly copies if the element type is non-primitive", info)
+
+			if mutableRegex.search(line):
+				warn("Avoid using mutable, like const_cast", info)
+
+for root in roots:
+	for root, dirs, files in os.walk(root):
+		for file in files:
+			fullpath = os.path.join(root,file)
+			if (file.endswith('.cpp') or file.endswith('.h')) and not exclude(fullpath):
+				examine(fullpath)
+
+for warningType in warnings.items():
+	print( "#### " + warningType[0])
+	print()
+	for detail in warningType[1]:
+		file = detail[0][detail[0].rfind('\\')+1:]
+		print("\t" + file + ":" + str(detail[1]) + "\t\t" + detail[2])
+
+	print("\n\n")
