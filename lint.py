@@ -5,7 +5,7 @@ import json
 import sys
 
 if len(sys.argv) != 2 or not os.path.isfile(sys.argv[1]):
-	print("Usage: py lin.py path/to/your/config.json")
+	print("Usage: py lint.py path/to/your/config.json")
 	exit(1)
 
 incremental = True
@@ -14,14 +14,16 @@ configPath = sys.argv[1]
 identifier = '[A-Za-z_][A-Za-z0-9_]*'
 typeName = '[A-Z_][A-Za-z0-9_]*'
 
-constructorRegEx = re.compile('^\s*' + typeName + '\(' + identifier + '[\*&]?\s*' + identifier + '\)\s*[{;]')
+notid = '[^A-Za-z0-9_]+'
+
+constructorRegEx = re.compile('^\s+' + typeName + '\(' + identifier + '[\*&]?\s*' + identifier + '\)\s*[{;]')
 newRegEx = re.compile('\s+new\s+')
-mallocRegex = re.compile('\s+malloc\s*\(.*\)\s*;')
+mallocRegex = re.compile(notid + 'malloc\s*\(.*\)\s*;')
 deleteRegex = re.compile('\s+delete\s+')
 allowedNewRegEx = re.compile('ref new\s+')
-longRegEx = re.compile('\s+long\s+')
+longRegEx = re.compile( notid + 'long' + notid )
 allowedLongRegex = re.compile('long double')
-longLongRegEx = re.compile('\s+long long\s+')
+longLongRegEx = re.compile( notid + 'long long' + notid )
 constCastRegEx = re.compile('const_cast<.*>\(.*\)')
 dynamicCastRegEx = re.compile('dynamic_cast<.*>\(.*\)')
 stackRegEx = re.compile('std::stack')
@@ -30,8 +32,6 @@ xyzFloatRegEx = re.compile('float\s+x\s+,\s+float\s+y\s+,\s+float\s+z')
 uniqueRefRegEx = re.compile('\(.*Unique<[^>]*>&[^&]')
 commentBanner = re.compile('//--------')
 startsWithComment = re.compile('^\s*//')
-notUsingMakeShared1 = re.compile('shared_ptr<[^>]*>\(.*\)')
-notUsingMakeShared2 = re.compile('Shared<[^>]*>\(.*\)')
 volatileRegEx = re.compile('\s+volatile\s+')
 mutableRegex = re.compile('\s+mutable\s+')
 inlineRegEx = re.compile('\s+inline\s+')
@@ -42,6 +42,11 @@ passingStringsViaCopyRegex = re.compile('\(.*std::string[^&,*]+' + identifier + 
 constReferenceRegex = re.compile('const\s*&')
 dangerousForAutoRegex = re.compile('for\s*\(\s*auto\s+' + identifier + '\s*:')
 if0Regex = re.compile('#if\s+0')
+classRegex = re.compile('\s+class\s+[^;]*$')
+autoptrRegex = re.compile('auto_ptr')
+constCharRegex = re.compile('const\s+char\s+\*')
+
+SAFE_TAG = '/*safe*/'
 
 warnings = {}
 
@@ -87,8 +92,8 @@ def clean(buffer):
 	STATE_MULTILINE = 3
 
 	state = STATE_CODE
-
-	for i in range(0, len(buffer)-1):
+	i = 0
+	while i < len(buffer)-1:
 		curr = buffer[i]
 		next = buffer[i+1]
 
@@ -97,7 +102,7 @@ def clean(buffer):
 				state = STATE_SKIP_LINE
 			elif curr == '"':
 				state = STATE_STRING
-			elif curr == '/' and next == '*':
+			elif curr == '/' and next == '*' and buffer[i:i+len(SAFE_TAG)] != SAFE_TAG:
 				state = STATE_MULTILINE
 			else:
 				result += curr
@@ -113,6 +118,8 @@ def clean(buffer):
 			if next == '"':
 				state = STATE_CODE
 
+		i += 1
+
 	return result
 
 
@@ -120,6 +127,8 @@ def examine(path):
 	with open (path, "r", encoding='ascii') as myfile:
 		count = 0
 		allCommented = 0
+		isClassDefinition = False
+		isHeader = path.endswith('.h')
 
 		try:
 			buffer = clean(myfile.read())
@@ -131,26 +140,28 @@ def examine(path):
 
 			count += 1
 
-			# if startsWithComment.search(line):
-			# 	allCommented += 1
-			# 	if allCommented == 4:
-			# 		allCommented = 0
-			# 		warn("Suspect comment group, is it commented code?", info)
-			# 	continue
-			
-			# allCommented = 0
+			if SAFE_TAG in line:
+				continue
 
 			#add a tab at the start to make pre-whitespaces coherent
 			line = '\t' + line
 
 			info = (path, count, line)
 
-			isClassDefinition = path.endswith('.h') # TODO use a proper class declaration detection?
+			if not isClassDefinition and classRegex.search(line):
+				isClassDefinition = True #it doesn't really know when it ends...
 
 			if isClassDefinition:
 				if constructorRegEx.search(line) and not '/*implicit*/' in line:
 					warn("Missing `explicit` keyword on possible conversion constructor", info)
 
+				if virtualInlineRegex1.search(line) or virtualInlineRegex2.search(line):
+					warn("virtual negates inline unless LTO and devirtualization is on? Explicitly include the code in the header if LTO fails", info)
+				elif inlineRegEx.search(line):
+					warn("inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired", info)
+
+
+			if isHeader:
 				if constReferenceRegex.search(line):
 					warn("Always place const before the type, pls!", info)
 				elif passingStringsViaCopyRegex.search(line):
@@ -185,16 +196,8 @@ def examine(path):
 			if commentBanner.search(line):
 				warn("Don't do comment banners pls", info)
 
-			if notUsingMakeShared1.search(line) or notUsingMakeShared2.search(line):
-				warn("Always create shared pointers through make_shared", info)
-
 			if volatileRegEx.search(line):
 				warn("volatile doesn't mean what you think it means, use std::atomic<>", info)
-
-			if virtualInlineRegex1.search(line) or virtualInlineRegex2.search(line):
-				warn("virtual negates inline unless LTO and devirtualization is on? Explicitly include the code in the header if LTO fails", info)
-			elif inlineRegEx.search(line):
-				warn("inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired", info)
 
 			if superUsageRegEx.search(line):
 				warn("Do not use super. It's a Java-ism that we're trying to get rid of", info)
@@ -204,6 +207,12 @@ def examine(path):
 
 			if mutableRegex.search(line):
 				warn("Avoid using mutable, like const_cast", info)
+
+			if autoptrRegex.search(line):
+				warn("Never use auto_ptr, upgrade to unique_ptr", info)
+
+			if constCharRegex.search(line):
+				warn("Don't use const char*, use std::string instead", info)
 
 def openShelve(path):
 	try:
