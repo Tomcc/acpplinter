@@ -27,10 +27,10 @@ longLongRegEx = re.compile( notid + 'long long' + notid )
 constCastRegEx = re.compile('const_cast<.*>\(.*\)')
 dynamicCastRegEx = re.compile('dynamic_cast<.*>\(.*\)')
 stackRegEx = re.compile('std::stack')
+listRegex = re.compile('std::list')
 xyzRegEx = re.compile('int\s+x\s+,\s+int\s+y\s+,\s+int\s+z')
 xyzFloatRegEx = re.compile('float\s+x\s+,\s+float\s+y\s+,\s+float\s+z')
 uniqueRefRegEx = re.compile('\(.*Unique<[^>]*>&[^&]')
-commentBanner = re.compile('//--------')
 startsWithComment = re.compile('^\s*//')
 volatileRegEx = re.compile('\s+volatile\s+')
 mutableRegex = re.compile('\s+mutable\s+')
@@ -156,9 +156,9 @@ def examine(path):
 					warn("Missing `explicit` keyword on possible conversion constructor", info)
 
 				if virtualInlineRegex1.search(line) or virtualInlineRegex2.search(line):
-					warn("virtual negates inline unless LTO and devirtualization is on? Explicitly include the code in the header if LTO fails", info)
+					warn("Virtual negates inline unless LTO and devirtualization is on? Explicitly include the code in the header if LTO fails", info)
 				elif inlineRegEx.search(line):
-					warn("inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired", info)
+					warn("Inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired", info)
 
 
 			if isHeader:
@@ -182,10 +182,13 @@ def examine(path):
 				warn("Don't use const_cast, really :(", info)
 
 			if dynamicCastRegEx.search(line):
-				warn("dynamic_cast? RTTI is off!", info)
+				warn("Dynamic_cast? RTTI is off!", info)
 
 			if stackRegEx.search(line):
-				warn("stack is non-contiguous and usually slower than a vector", info)
+				warn("Stack is non-contiguous and usually slower than a vector", info)
+
+			if listRegex.search(line):
+				warn("Don't use std::list, there is rarely any reason at all to do it", info)
 
 			if xyzRegEx.search(line) or xyzFloatRegEx.search(line):
 				warn("Use a TilePos or a Vec3 instead", info)
@@ -193,11 +196,8 @@ def examine(path):
 			if uniqueRefRegEx.search(line):
 				warn("Pass unique pointers by value, force the caller to move explicitly", info)
 
-			if commentBanner.search(line):
-				warn("Don't do comment banners pls", info)
-
 			if volatileRegEx.search(line):
-				warn("volatile doesn't mean what you think it means, use std::atomic<>", info)
+				warn("Probably volatile doesn't mean what you think it means, use std::atomic<>", info)
 
 			if superUsageRegEx.search(line):
 				warn("Do not use super. It's a Java-ism that we're trying to get rid of", info)
