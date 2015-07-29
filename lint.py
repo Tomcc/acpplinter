@@ -47,6 +47,7 @@ autoptrRegex = re.compile('auto_ptr')
 constCharRegex = re.compile('const\s+char\s+\*')
 unlocalizedRegex = re.compile('LocalizedString::fromRaw\s*\(\s*".*"\s*\)')
 registerRegex = re.compile('\s+register\s+')
+NULLRegex = re.compile(notid + "NULL" + notid)
 
 SAFE_TAG = '/*safe*/'
 
@@ -218,6 +219,9 @@ def examine(path):
 
 			if registerRegex.search(line):
 				warn("Don't use the register keyword, compilers are able to optimally allocate registers", info)
+
+			if NULLRegex.search(line):
+				warn("Don't use NULL, use nullptr", info)
 
 def openShelve(path):
 	try:
