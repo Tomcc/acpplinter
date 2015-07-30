@@ -16,6 +16,8 @@ typeName = '[A-Z_][A-Za-z0-9_]*'
 
 notid = '[^A-Za-z0-9_]+'
 
+openParen = '\s*\('
+
 constructorRegEx = re.compile('^\s+' + typeName + '\(' + identifier + '[\*&]?\s*' + identifier + '\)\s*[{;]')
 newRegEx = re.compile('\s+new\s+')
 mallocRegex = re.compile(notid + 'malloc\s*\(.*\)\s*;')
@@ -48,6 +50,7 @@ constCharRegex = re.compile('const\s+char\s+\*')
 unlocalizedRegex = re.compile('LocalizedString::fromRaw\s*\(\s*".*"\s*\)')
 registerRegex = re.compile('\s+register\s+')
 NULLRegex = re.compile(notid + "NULL" + notid)
+pushBackRegex = re.compile(notid + 'push_back' + openParen )
 
 SAFE_TAG = '/*safe*/'
 
@@ -222,6 +225,9 @@ def examine(path):
 
 			if NULLRegex.search(line):
 				warn("Don't use NULL, use nullptr", info)
+
+			if pushBackRegex.search(line):
+				warn("Don't use push_back, always prefer emplace_back", info)
 
 def openShelve(path):
 	try:
