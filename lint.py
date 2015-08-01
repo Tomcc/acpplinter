@@ -19,9 +19,9 @@ notid = '[^A-Za-z0-9_]+'
 openParen = '\s*\('
 
 constructorRegEx = re.compile('^\s+' + typeName + '\(' + identifier + '[\*&]?\s*' + identifier + '\)\s*[{;]')
-newRegEx = re.compile('\s+new\s+')
+newRegEx = re.compile(notid + 'new\s+')
 mallocRegex = re.compile(notid + 'malloc\s*\(.*\)\s*;')
-deleteRegex = re.compile('\s+delete\s+')
+deleteRegex = re.compile(notid + 'delete\s+')
 allowedNewRegEx = re.compile('ref new\s+')
 longRegEx = re.compile( notid + 'long' + notid )
 allowedLongRegex = re.compile('long double')
@@ -48,7 +48,7 @@ classRegex = re.compile('\s+class\s+[^;]*$')
 autoptrRegex = re.compile('auto_ptr')
 constCharRegex = re.compile('const\s+char\s+\*')
 unlocalizedRegex = re.compile('LocalizedString::fromRaw\s*\(\s*".*"\s*\)')
-registerRegex = re.compile('\s+register\s+')
+registerRegex = re.compile(notid + 'register\s+')
 NULLRegex = re.compile(notid + "NULL" + notid)
 pushBackRegex = re.compile(notid + 'push_back' + openParen )
 
@@ -158,7 +158,7 @@ def examine(path):
 				isClassDefinition = True #it doesn't really know when it ends...
 
 			if isClassDefinition:
-				if constructorRegEx.search(line) and not '/*implicit*/' in line:
+				if constructorRegEx.search(line):
 					warn("Missing `explicit` keyword on possible conversion constructor", info)
 
 				if virtualInlineRegex1.search(line) or virtualInlineRegex2.search(line):
