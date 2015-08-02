@@ -118,7 +118,7 @@ def clean(buffer):
 			elif next == '\n':
 				result += curr
 		elif state == STATE_STRING:
-			if next == '"':
+			if curr == '"':
 				state = STATE_CODE
 
 		i += 1
