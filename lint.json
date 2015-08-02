@@ -1,0 +1,91 @@
+{
+	"roots":[
+	 	"../dojo/src", 
+	 	"../dojo/include",
+	 	"../dojo2D/src", 
+	 	"../dojo2D/include", 
+	 	"src"
+	 ],
+
+	"excludes":[
+	 	"lodepng",
+	 	"atomicops",
+	 	"Pipe.h",
+	 	"android_native_app_glue.h",
+	 	"AndroidPlatform\\."
+	 ],
+
+	"includes":[".cpp$", ".h$"],
+
+	"incremental":false,
+
+	"tests":[ {
+			"fail":["[^A-Za-z0-9_]+new\\s+"],
+			"allow":["ref new\\s+"],
+			"error":"Don't use new, use a owning pointer or a container instead"
+		}, {
+			"classOnly":true,
+			"fail":["^\\s+[A-Z_][A-Za-z0-9_]*\\([A-Za-z_][A-Za-z0-9_]*[\\*&]?\\s*[A-Za-z_][A-Za-z0-9_]*\\)\\s*[{;]"],
+			"error":"Missing `explicit` keyword on possible conversion constructor"
+		}, {
+			"fail":["[^A-Za-z0-9_]+malloc\\s*\\(.*\\)\\s*;"],
+			"error":"Don't use malloc(), try to use containers instead"
+		}, {
+			"fail":["[^A-Za-z0-9_]+delete\\s+"],
+			"error":"Don't use delete, use a owning pointer or a container instead"
+		}, {
+			"fail":["[^A-Za-z0-9_]+long[^A-Za-z0-9_]+"],
+			"allow":["long double", "[^A-Za-z0-9_]+long long[^A-Za-z0-9_]+" ],
+			"error":"Use of inconsistent-length type long: use int64_t or int instead"
+		}, {
+			"fail":["[^A-Za-z0-9_]+long long[^A-Za-z0-9_]+" ],
+			"error":"Replace long long with int64_t"
+		}, {
+			"fail":["const_cast<.*>\\(.*\\)"],
+			"error":"Don't use const_cast, really :("
+		}, {
+			"fail":["dynamic_cast<.*>\\(.*\\)"],
+			"error":"Dynamic_cast? RTTI is off!"
+		}, {
+			"fail":["std::stack"],
+			"error":"Stack is non-contiguous and usually slower than a vector"
+		}, {
+			"fail":["std::list"],
+			"error":"Don't use std::list, there is rarely any reason at all to do it"
+		}, {
+			"fail":["\\(.*Unique<[^>]*>&[^&]"],
+			"error":"Pass unique pointers by value, force the caller to move explicitly"
+		}, {
+			"fail":["\\s+volatile\\s+"],
+			"error":"Probably volatile doesn't mean what you think it means, use std::atomic<>"
+		}, {
+			"classOnly":true,
+			"fail":["\\s+inline\\s+"],
+			"error":"Inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired"
+		}, {
+			"headerOnly":true,
+			"fail":["\\(.*std::string[^&,*]+[A-Za-z_][A-Za-z0-9_]*.*\\)"],
+			"allow":["const\\s*&"],
+			"error":"Passing strings via copy"
+		}, {
+			"fail":["for\\s*\\(\\s*[a-zA-Z_]+[a-zA-Z0-9_]*\\s+[a-zA-Z_]+[a-zA-Z0-9_]*\\s*:\\s*[a-zA-Z_]+[a-zA-Z0-9_]*"],
+			"allow":["range"],
+			"error":"Use plain for(T : foo), always use for(T&)! The first form can incur in lots of costly copies if the element type is non-primitive"
+		}, {
+			"fail":["auto_ptr"],
+			"error":"Never use auto_ptr, upgrade to unique_ptr"
+		}, {
+			"fail":["const\\s+char\\s+\\*"],
+			"error":"Don't use const char*, use std::string instead"
+		}, {
+			"fail":["[^A-Za-z0-9_]+register\\s+"],
+			"error":"Don't use the register keyword, compilers are able to optimally allocate registers"
+		}, {
+			"fail":["[^A-Za-z0-9_]+NULL[^A-Za-z0-9_]+"],
+			"error":"Don't use NULL, use nullptr"
+		}, {
+			"fail":["[^A-Za-z0-9_]+push_back\\s*\\("],
+			"error":"Don't use push_back, always prefer emplace_back"
+		}
+	]
+}
