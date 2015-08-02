@@ -46,20 +46,14 @@ class Test:
 		if (self.inClass and not isClassDefinition) or (self.inHeader and not isHeader):
 			return
 
-		error = False
 		for fail in self.fail:
 			if fail.search(line):
-				error = True
-				break
-		
-		if not error:
-			return
+				for allow in self.allow:
+					if allow.search(line):
+						return
 
-		for allow in self.allow:
-			if allow.search(line):
+				warn(self.error, info)
 				return
-
-		warn(self.error, info)
 
 classRegex = re.compile('\s+class\s+[^;]*$')
 SAFE_TAG = '/*safe*/'
