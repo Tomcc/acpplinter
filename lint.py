@@ -11,50 +11,59 @@ if len(sys.argv) != 2 or not os.path.isfile(sys.argv[1]):
 incremental = True
 configPath = sys.argv[1]
 
-identifier = '[A-Za-z_][A-Za-z0-9_]*'
-typeName = '[A-Z_][A-Za-z0-9_]*'
+warnings = {}
 
-notid = '[^A-Za-z0-9_]+'
+tests = []
 
-openParen = '\s*\('
+def tryGet(json, key, default):
+	try:
+		return json[key]
+	except:
+		return default
 
-constructorRegEx = re.compile('^\s+' + typeName + '\(' + identifier + '[\*&]?\s*' + identifier + '\)\s*[{;]')
-newRegEx = re.compile(notid + 'new\s+')
-mallocRegex = re.compile(notid + 'malloc\s*\(.*\)\s*;')
-deleteRegex = re.compile(notid + 'delete\s+')
-allowedNewRegEx = re.compile('ref new\s+')
-longRegEx = re.compile( notid + 'long' + notid )
-allowedLongRegex = re.compile('long double')
-longLongRegEx = re.compile( notid + 'long long' + notid )
-constCastRegEx = re.compile('const_cast<.*>\(.*\)')
-dynamicCastRegEx = re.compile('dynamic_cast<.*>\(.*\)')
-stackRegEx = re.compile('std::stack')
-listRegex = re.compile('std::list')
-xyzRegEx = re.compile('int\s+x\s+,\s+int\s+y\s+,\s+int\s+z')
-xyzFloatRegEx = re.compile('float\s+x\s+,\s+float\s+y\s+,\s+float\s+z')
-uniqueRefRegEx = re.compile('\(.*Unique<[^>]*>&[^&]')
-startsWithComment = re.compile('^\s*//')
-volatileRegEx = re.compile('\s+volatile\s+')
-mutableRegex = re.compile('\s+mutable\s+')
-inlineRegEx = re.compile('\s+inline\s+')
-superUsageRegEx = re.compile('typedef.*super;')
-virtualInlineRegex1 = re.compile('virtual.*inline')
-virtualInlineRegex2 = re.compile('inline.*virtual')
-passingStringsViaCopyRegex = re.compile('\(.*std::string[^&,*]+' + identifier + '.*\)')
-constReferenceRegex = re.compile('const\s*&')
-dangerousForAutoRegex = re.compile('for\s*\(\s*auto\s+' + identifier + '\s*:')
-if0Regex = re.compile('#if\s+0')
+def warn(msg, info):
+	if not msg in warnings:
+		warnings[msg] = []
+
+	warnings[msg].append(info)
+
+class Test:
+	def __init__(self, desc):
+		self.fail = []
+		for string in desc["fail"]:
+			self.fail.append(re.compile(string))
+
+		self.allow = []
+		for string in tryGet(desc, "allow", []):
+			self.allow.append(re.compile(string))
+
+		self.inClass = tryGet(desc, "classOnly", False)
+		self.inHeader = tryGet(desc, "headerOnly", False)
+
+		self.error = desc["error"]
+
+	def run(self, line, isClassDefinition, isHeader, info):
+		if (self.inClass and not isClassDefinition) or (self.inHeader and not isHeader):
+			return
+
+		error = False
+		for fail in self.fail:
+			if fail.search(line):
+				error = True
+				break
+		
+		if not error:
+			return
+
+		for allow in self.allow:
+			if allow.search(line):
+				return
+
+		warn(self.error, info)
+
 classRegex = re.compile('\s+class\s+[^;]*$')
-autoptrRegex = re.compile('auto_ptr')
-constCharRegex = re.compile('const\s+char\s+\*')
-unlocalizedRegex = re.compile('LocalizedString::fromRaw\s*\(\s*".*"\s*\)')
-registerRegex = re.compile(notid + 'register\s+')
-NULLRegex = re.compile(notid + "NULL" + notid)
-pushBackRegex = re.compile(notid + 'push_back' + openParen )
-
 SAFE_TAG = '/*safe*/'
 
-warnings = {}
 
 def exclude(path):
 	for filter in excludeFilters:
@@ -82,12 +91,6 @@ def isChanged(path):
 	db[path] = newDate
 	return True
 
-
-def warn(msg, info):
-	if not msg in warnings:
-		warnings[msg] = []
-
-	warnings[msg].append(info)
 
 def clean(buffer):
 	result = ""
@@ -157,77 +160,8 @@ def examine(path):
 			if not isClassDefinition and classRegex.search(line):
 				isClassDefinition = True #it doesn't really know when it ends...
 
-			if isClassDefinition:
-				if constructorRegEx.search(line):
-					warn("Missing `explicit` keyword on possible conversion constructor", info)
-
-				if virtualInlineRegex1.search(line) or virtualInlineRegex2.search(line):
-					warn("Virtual negates inline unless LTO and devirtualization is on? Explicitly include the code in the header if LTO fails", info)
-				elif inlineRegEx.search(line):
-					warn("Inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired", info)
-
-
-			if isHeader:
-				if constReferenceRegex.search(line):
-					warn("Always place const before the type, pls!", info)
-				elif passingStringsViaCopyRegex.search(line):
-					warn("Passing strings via copy", info)
-
-			if (newRegEx.search(line) and not allowedNewRegEx.search(line)) or deleteRegex.search(line):
-				warn("Don't use new and delete, use a owning pointer or a container instead", info)
-
-			if mallocRegex.search(line):
-				warn("Don't use malloc(), try to use containers instead", info)
-
-			if longLongRegEx.search(line):
-				warn('Replace long long with int64_t', info)
-			elif longRegEx.search(line) and not allowedLongRegex.search(line):
-				warn('Use of inconsistent-length type long: use int64_t or int instead', info)
-
-			if constCastRegEx.search(line):
-				warn("Don't use const_cast, really :(", info)
-
-			if dynamicCastRegEx.search(line):
-				warn("Dynamic_cast? RTTI is off!", info)
-
-			if stackRegEx.search(line):
-				warn("Stack is non-contiguous and usually slower than a vector", info)
-
-			if listRegex.search(line):
-				warn("Don't use std::list, there is rarely any reason at all to do it", info)
-
-			if xyzRegEx.search(line) or xyzFloatRegEx.search(line):
-				warn("Use a TilePos or a Vec3 instead", info)
-
-			if uniqueRefRegEx.search(line):
-				warn("Pass unique pointers by value, force the caller to move explicitly", info)
-
-			if volatileRegEx.search(line):
-				warn("Probably volatile doesn't mean what you think it means, use std::atomic<>", info)
-
-			if superUsageRegEx.search(line):
-				warn("Do not use super. It's a Java-ism that we're trying to get rid of", info)
-
-			if dangerousForAutoRegex.search(line) and not 'range' in line:
-				warn("Use plain for(auto : foo), always use for(auto&)! The first form can incur in lots of costly copies if the element type is non-primitive", info)
-
-			if mutableRegex.search(line):
-				warn("Avoid using mutable, like const_cast", info)
-
-			if autoptrRegex.search(line):
-				warn("Never use auto_ptr, upgrade to unique_ptr", info)
-
-			if constCharRegex.search(line):
-				warn("Don't use const char*, use std::string instead", info)
-
-			if registerRegex.search(line):
-				warn("Don't use the register keyword, compilers are able to optimally allocate registers", info)
-
-			if NULLRegex.search(line):
-				warn("Don't use NULL, use nullptr", info)
-
-			if pushBackRegex.search(line):
-				warn("Don't use push_back, always prefer emplace_back", info)
+			for test in tests:
+				test.run(line, isClassDefinition, isHeader, info)
 
 def openShelve(path):
 	try:
@@ -252,6 +186,9 @@ with open(configPath) as configFile:
 	includeFilters = []
 	for i in config['includes']:
 		includeFilters.append( re.compile(i) )
+
+	for desc in config['tests']:
+		tests.append(Test(desc))
 
 	incremental = getKey('incremental', False)
 	dbPath = getKey('dbpath', os.getenv('APPDATA') + "/acpplinter")
