@@ -164,12 +164,6 @@ def openShelve(path):
 		pass
 	return shelve.open(path + "/files.db", 'c')
 
-def getKey(key, default):
-	try:
-		return config[key]
-	except:
-		return default
-
 with open(configPath) as configFile:
 	config = json.load(configFile)
 
@@ -184,8 +178,8 @@ with open(configPath) as configFile:
 	for desc in config['tests']:
 		tests.append(Test(desc))
 
-	incremental = getKey('incremental', False)
-	dbPath = getKey('dbpath', os.getenv('APPDATA') + "/acpplinter")
+	incremental = tryGet(config, 'incremental', False)
+	dbPath = tryGet(config, 'dbpath', os.getenv('APPDATA') + "/acpplinter")
 
 with openShelve(dbPath) as db:
 
@@ -216,3 +210,7 @@ for warningType in warnings.items():
 
 print("\nFound " + str(count) + " issues!\n")
 
+if count == 0:
+	exit(0)
+else:
+	exit(1)
