@@ -70,7 +70,7 @@
 		}, {
 			"fail":["for\\s*\\(\\s*[a-zA-Z_]+[a-zA-Z0-9_]*\\s+[a-zA-Z_]+[a-zA-Z0-9_]*\\s*:\\s*[a-zA-Z_]+[a-zA-Z0-9_]*"],
 			"allow":["range"],
-			"error":"Use plain for(T : foo), always use for(T&)! The first form can incur in lots of costly copies if the element type is non-primitive"
+			"error":"Don't use plain for(T : foo), always use for(T&)! The first form can incur in lots of costly copies if the element type is non-primitive"
 		}, {
 			"fail":["auto_ptr"],
 			"error":"Never use auto_ptr, upgrade to unique_ptr"
@@ -86,6 +86,9 @@
 		}, {
 			"fail":["[^A-Za-z0-9_]+push_back\\s*\\("],
 			"error":"Don't use push_back, always prefer emplace_back"
+		}, {
+			"fail":["[^A-Za-z0-9_]+goto[^A-Za-z0-9_]+"],
+			"error":"Don't use goto dude"
 		}
 	]
 }
