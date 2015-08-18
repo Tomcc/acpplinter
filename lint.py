@@ -3,6 +3,7 @@ import os
 import shelve
 import json
 import sys
+from sys import platform as _platform
 
 if len(sys.argv) != 2 or not os.path.isfile(sys.argv[1]):
 	print("Usage: py lint.py path/to/your/config.json")
@@ -125,6 +126,13 @@ def clean(buffer):
 
 	return result
 
+def getDefaultPath():
+	if _platform == "linux" or _platform == "linux2":
+	    return None
+	elif _platform == "darwin":
+		return os.path.expanduser("~") + "/Library/Application Support/acpplinter"
+	elif _platform == "win32":
+		return os.getenv('APPDATA') + "/acpplinter"
 
 def examine(path):
 	with open (path, "r", encoding='ascii') as myfile:
@@ -179,7 +187,7 @@ with open(configPath) as configFile:
 		tests.append(Test(desc))
 
 	incremental = tryGet(config, 'incremental', False)
-	dbPath = tryGet(config, 'dbpath', os.getenv('APPDATA') + "/acpplinter")
+	dbPath = tryGet(config, 'dbpath', getDefaultPath())
 
 with openShelve(dbPath) as db:
 
