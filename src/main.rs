@@ -1,7 +1,11 @@
+#![feature(plugin)]
+#![plugin(regex_macros)]
+
 extern crate regex;
 extern crate rustc_serialize;
-extern crate glob;
+extern crate time;
 
+use time::precise_time_ns;
 use std::env;
 use rustc_serialize::json;
 use std::io::prelude::*;
@@ -24,10 +28,29 @@ fn matches_any(string: &str, exps: &Vec<Regex> ) -> bool {
 	return false;
 }
 
-struct Info {
-    path: String,
+struct Info<'a> {
+    path: &'a String,
     line: usize,
-    snippet: String
+    snippet: &'a str
+}
+
+#[derive(Debug)]
+struct Warning {
+	message: String,
+	path: String,
+	line: usize,
+	snippet: String,
+}
+
+impl Warning {
+	fn new(message: &String, info: &Info) -> Self {
+		Warning{
+			message: message.clone(), //TODO don't copy string?
+			path: info.path.clone(),
+			line: info.line,
+			snippet: info.snippet.to_owned()
+		}
+	}
 }
 
 #[derive(RustcDecodable, Debug)]
@@ -36,7 +59,7 @@ struct TestDesc {
 	allow: Option<Vec<String>>,
 	error: String,
 	classOnly: Option<bool>,
-	headerOnly: Option<bool>
+	headerOnly: Option<bool>,
 }
 
 #[derive(RustcDecodable, Debug)]
@@ -45,16 +68,16 @@ struct ConfigDesc {
 	excludes: Option<Vec<String>>,
 	includes: Option<Vec<String>>,
 	incremental: Option<bool>,
-	tests: Vec<TestDesc>
+	tests: Vec<TestDesc>,
+	safeTag: Option<String>
 }
 
-#[derive(Debug)]
 struct Test {
 	fail: Vec<Regex>,
 	allow: Vec<Regex>,
 	error: String,
-	classOnly: bool,
-	headerOnly: bool
+	class_only: bool,
+	header_only: bool
 }
 
 impl Test {
@@ -63,23 +86,41 @@ impl Test {
 			fail: to_regex_array(&desc.fail),
 			allow: to_regex_array(&desc.allow.unwrap_or_default()),
 			error: desc.error.clone(),
-			classOnly: desc.classOnly.unwrap_or(false),
-			headerOnly: desc.headerOnly.unwrap_or(false)
+			class_only: desc.classOnly.unwrap_or(false),
+			header_only: desc.headerOnly.unwrap_or(false)
 		}
 	}
 
-	fn run(&self, line: &str, isHeader: bool, isClass: bool, info: &Info) {
+	fn run(&self, line: &str, header: bool, class: bool, info: &Info) -> Option<Warning> {
+		if (self.class_only && !class) || (self.header_only && !header) {
+			return None;
+		}
 
+		for fail in &self.fail {
+			if fail.is_match(line) {
+				for allow in &self.allow {
+					if allow.is_match(line) {
+						return None
+					}
+				}
+
+				return Some(Warning::new( &self.error, info))
+			}
+		}
+		return None;
 	}
 }
 
-#[derive(Debug)]
 struct Config {
 	roots: Vec<String>,
 	excludes: Vec<Regex>,
 	includes: Vec<Regex>,
 	incremental: bool,
-	tests: Vec<Test>
+	tests: Vec<Test>,
+	safe_tag: String,
+	
+	class_regex: Regex,
+	warnings: Vec<Warning>
 }
 
 impl Config {
@@ -91,7 +132,10 @@ impl Config {
 			incremental: desc.incremental.unwrap_or(false),
 			tests: desc.tests.into_iter().map(|td|{
 				Test::from_desc(td)
-			}).collect()
+			}).collect(),
+			safe_tag: desc.safeTag.unwrap_or("/*SAFE_TAG*/".to_owned()),
+			class_regex: regex!("\\s+class\\s+[^;]*$"),
+			warnings: vec![]
 		}
 	}
 
@@ -156,37 +200,75 @@ fn walk(path: &str, paths: &mut Vec<String>) {
     }
 }
 
+fn examine(config: &Config, path: String, warnings: &mut Vec<Warning>){
+	//println!("Checking {}", path);
+	
+	let mut file_content = String::new();
+
+	let mut in_class = false;
+	let in_header = path.ends_with(".h");
+	let mut line_number = 0;
+
+	{
+		let mut file = File::open(&path).unwrap();	
+		file.read_to_string(&mut file_content);
+	}
+
+	//TODO ensure stuff is ASCII manually
+	if file_content.len() <= 1 {
+ 		println!("{} is empty", path);
+ 		return;
+	}
+	
+	clean_cpp_file_content(&mut file_content);
+
+	for line in file_content.split('\n') {
+		line_number += 1;
+
+		//TODO SAFE_TAG
+
+		let start = time::precise_time_ns();
+		if config.class_regex.is_match(line) {
+			in_class = true; //TODO actually *exit* classes too...
+		}
+		let elapsed = time::precise_time_ns() - start;
+
+		if line_number % 100 == 0 {
+			println!("{:?}", elapsed);
+		}
+
+		// //TODO //add a tab at the start to make pre-whitespaces coherent
+		// let info = Info{ 
+		// 	path: &path,
+		// 	line: line_number,
+		// 	snippet: line
+		// };
+
+		// for test in &config.tests {
+		// 	if let Some(warning) = test.run(line, in_header, in_class, &info) {
+		// 		warnings.push(warning);
+		// 	}
+		// }
+	}
+}
+
 fn run(config: Config) {
 	let mut paths:Vec<String> = vec![];
+	let mut warnings: Vec<Warning> = vec!();
 
 	for root in &config.roots {
 		walk(root.as_ref(), &mut paths );
 	}
 
 	for path in paths {
+		//TODO do all of them in a thread pool! (yes, disk too)
+		//SSDs scale with the amount of reads
 		if config.should_check(path.as_ref()) {
-
-			let mut file = File::open(&path).unwrap();		
-			let mut file_content = String::new();
-
-			file.read_to_string(&mut file_content);
-
-			//TODO ensure stuff is ASCII manually
-			if file_content.len() <= 1 {
-		 		println!("{} is empty", path);
-		 		continue;
-			}
-
-			//TODO shoot this part on a threadpool!
-			{
-				clean_cpp_file_content(&mut file_content);
-
-				for line in file_content.split('\n') {
-
-				}
-			}
+			examine(&config, path, &mut warnings);
 		}
 	}
+
+	println!("{:?}", warnings);
 }
 
 fn main() {
