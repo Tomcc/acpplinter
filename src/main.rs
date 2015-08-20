@@ -2,9 +2,12 @@
 #![plugin(regex_macros)]
 #![feature(path_ext)]
 
+extern crate threadpool;
+extern crate num_cpus;
 extern crate regex;
 extern crate rustc_serialize;
 
+use threadpool::ThreadPool;
 use std::path::Path;
 use std::env;
 use rustc_serialize::json;
@@ -15,6 +18,7 @@ use std::fs::{read_dir, metadata};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::process;
+use std::sync::mpsc;
 
 fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
 	strings.iter().map(|string|{ 
@@ -74,6 +78,20 @@ impl Warnings {
 			self.map.get_mut(message).unwrap().push(Warning::new(info));
 		}
 	}
+
+	fn add_map(&mut self, other: Warnings) {
+		for (k, v) in other.map {
+			if self.map.contains_key(&k) {
+				let mut vec = self.map.get_mut(&k).unwrap();
+				for elem in v {
+					vec.push(elem);
+				}
+			}
+			else {
+				self.map.insert(k.clone(), v);
+			}
+		}
+	}
 }
 
 impl fmt::Display for Warnings {
@@ -108,6 +126,7 @@ struct ConfigDesc {
 	safeTag: Option<String>
 }
 
+#[derive(Clone)]
 struct Test {
 	fail: Vec<Regex>,
 	allow: Vec<Regex>,
@@ -146,6 +165,7 @@ impl Test {
 	}
 }
 
+#[derive(Clone)]
 struct Config {
 	roots: Vec<String>,
 	excludes: Vec<Regex>,
@@ -233,7 +253,9 @@ fn walk(path: &str, paths: &mut Vec<String>) {
     }
 }
 
-fn examine(config: &Config, path: String, warnings: &mut Warnings){
+fn examine(config: &Config, path: String) -> Warnings {
+	let mut warnings = Warnings::default();
+
 	let mut file_content = String::new();
 
 	let mut in_class = false;
@@ -242,11 +264,11 @@ fn examine(config: &Config, path: String, warnings: &mut Warnings){
 
 	{
 		let mut file = File::open(&path).unwrap();	
-		file.read_to_string(&mut file_content);
+		file.read_to_string(&mut file_content).unwrap();
 	}
 
 	if file_content.len() <= 1 {
- 		return;
+ 		return warnings;
 	}
 	
 	//TODO ensure stuff is ASCII manually
@@ -273,23 +295,37 @@ fn examine(config: &Config, path: String, warnings: &mut Warnings){
 			}
 		}
 	}
+
+	warnings
 }
 
 fn run(config: Config) -> usize {
 	let mut paths:Vec<String> = vec![];
-	let mut warnings = Warnings::default();
+
+	let pool = ThreadPool::new(num_cpus::get());
 
 	for root in &config.roots {
 		walk(root.as_ref(), &mut paths );
 	}
 
+	let (sender, receiver) = mpsc::channel();
+
+	let mut task_count = 0;
 	for path in paths {
-		//TODO do all of them in a thread pool! (yes, disk too)
-		//SSDs scale with the amount of reads
 		if config.should_check(path.as_ref()) {
-			examine(&config, path, &mut warnings);
-		}
+			task_count += 1;
+			let config = config.clone();
+			let sender = sender.clone();
+			pool.execute(move|| {
+				sender.send(examine(&config, path)).unwrap();
+			});
+		}		
 	}
+
+	let warnings = receiver.iter().take(task_count).fold(
+		Warnings::default(), 
+		|mut w, cur| {w.add_map(cur); w}
+	);
 
 	let count = warnings.map.iter().fold(0, |c, (_, v)| {c + v.len()});
 	println!("{}", warnings);
@@ -318,7 +354,7 @@ fn main() {
 
 	if let Ok(mut file) = File::open(path) {
 		let mut file_content = String::new();
-		file.read_to_string(&mut file_content);
+		file.read_to_string(&mut file_content).unwrap();
 
 		match json::decode::<ConfigDesc>(file_content.as_ref()) {
 			Ok(desc) => {
@@ -337,5 +373,6 @@ fn main() {
 	}
 	else {
 		println!("Cannot open config {}", path.display());
+		process::exit(1);
 	}
 }
