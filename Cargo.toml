@@ -6,7 +6,6 @@ authors = ["Tommaso Checchi <tommaso.checchi1@gmail.com>"]
 [dependencies]
 regex = "0.1.8"
 rustc-serialize = "0.3.16"
-time = "0.1"
 regex_macros = "0.1.8"
 threadpool = "*"
 num_cpus = "0.2.6"
