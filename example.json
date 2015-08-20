@@ -56,11 +56,11 @@
 			"fail":["\\(.*Unique<[^>]*>&[^&]"],
 			"error":"Pass unique pointers by value, force the caller to move explicitly"
 		}, {
-			"fail":["\\s+volatile\\s+"],
+			"fail":["(^|\\s)+volatile\\s+"],
 			"error":"Probably volatile doesn't mean what you think it means, use std::atomic<>"
 		}, {
 			"classOnly":true,
-			"fail":["\\s+inline\\s+"],
+			"fail":["(^|\\s)+inline\\s+"],
 			"error":"Inline doesn't do anything on modern compilers, just explicitly include the code in the header if desired"
 		}, {
 			"headerOnly":true,

@@ -168,7 +168,7 @@ impl Config {
 				Test::from_desc(td)
 			}).collect(),
 			safe_tag: desc.safeTag.unwrap_or("/*SAFE_TAG*/".to_owned()),
-			class_regex: regex!("\\s+class\\s+[^;]*$"),
+			class_regex: regex!("(^|\\s)+class\\s+[^;]*$"),
 		}
 	}
 
