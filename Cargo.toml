@@ -1,0 +1,9 @@
+[package]
+name = "acpplinter"
+version = "0.1.0"
+authors = ["Tommaso Checchi <tommaso.checchi1@gmail.com>"]
+
+[dependencies]
+regex = "0.1.8"
+rustc-serialize = "0.3.16"
+glob = "*"
