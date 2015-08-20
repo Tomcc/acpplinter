@@ -5,13 +5,14 @@ extern crate regex;
 extern crate rustc_serialize;
 extern crate time;
 
-use time::precise_time_ns;
 use std::env;
 use rustc_serialize::json;
 use std::io::prelude::*;
 use std::fs::File;
 use regex::Regex;
 use std::fs::{read_dir, metadata};
+use std::collections::BTreeMap;
+use std::fmt;
 
 fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
 	strings.iter().map(|string|{ 
@@ -36,20 +37,53 @@ struct Info<'a> {
 
 #[derive(Debug)]
 struct Warning {
-	message: String,
 	path: String,
 	line: usize,
 	snippet: String,
 }
 
 impl Warning {
-	fn new(message: &String, info: &Info) -> Self {
+	fn new(info: &Info) -> Self {
 		Warning{
-			message: message.clone(), //TODO don't copy string?
 			path: info.path.clone(),
 			line: info.line,
 			snippet: info.snippet.to_owned()
 		}
+	}
+}
+
+impl fmt::Display for Warning {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "\t{}:{}\t\t{}", self.path, self.line, self.snippet)
+	}
+}
+
+#[derive(Default)]
+struct Warnings {
+	map: BTreeMap<String, Vec<Warning>>
+}
+
+impl Warnings {
+	fn add(&mut self, message: &String, info: &Info) {
+		if !self.map.contains_key(message) {
+			self.map.insert(message.clone(), vec![Warning::new(info)]);
+		}
+		else {
+			self.map.get_mut(message).unwrap().push(Warning::new(info));
+		}
+	}
+}
+
+impl fmt::Display for Warnings {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		for (k, v) in &self.map {
+			write!(f, "\n#### {}\n\n", k);	
+
+			for warning in v {
+				write!(f, "{}\n", warning);
+			}
+		}
+		Ok(())
 	}
 }
 
@@ -91,23 +125,22 @@ impl Test {
 		}
 	}
 
-	fn run(&self, line: &str, header: bool, class: bool, info: &Info) -> Option<Warning> {
+	fn run(&self, line: &str, header: bool, class: bool) -> bool {
 		if (self.class_only && !class) || (self.header_only && !header) {
-			return None;
+			return false;
 		}
 
 		for fail in &self.fail {
 			if fail.is_match(line) {
 				for allow in &self.allow {
 					if allow.is_match(line) {
-						return None
+						return false;
 					}
 				}
-
-				return Some(Warning::new( &self.error, info))
+				return true;
 			}
 		}
-		return None;
+		return false;
 	}
 }
 
@@ -118,9 +151,8 @@ struct Config {
 	incremental: bool,
 	tests: Vec<Test>,
 	safe_tag: String,
-	
-	class_regex: Regex,
-	warnings: Vec<Warning>
+
+	class_regex: Regex
 }
 
 impl Config {
@@ -135,7 +167,6 @@ impl Config {
 			}).collect(),
 			safe_tag: desc.safeTag.unwrap_or("/*SAFE_TAG*/".to_owned()),
 			class_regex: regex!("\\s+class\\s+[^;]*$"),
-			warnings: vec![]
 		}
 	}
 
@@ -200,9 +231,7 @@ fn walk(path: &str, paths: &mut Vec<String>) {
     }
 }
 
-fn examine(config: &Config, path: String, warnings: &mut Vec<Warning>){
-	//println!("Checking {}", path);
-	
+fn examine(config: &Config, path: String, warnings: &mut Warnings){
 	let mut file_content = String::new();
 
 	let mut in_class = false;
@@ -216,7 +245,6 @@ fn examine(config: &Config, path: String, warnings: &mut Vec<Warning>){
 
 	//TODO ensure stuff is ASCII manually
 	if file_content.len() <= 1 {
- 		println!("{} is empty", path);
  		return;
 	}
 	
@@ -226,35 +254,28 @@ fn examine(config: &Config, path: String, warnings: &mut Vec<Warning>){
 		line_number += 1;
 
 		//TODO SAFE_TAG
-
-		let start = time::precise_time_ns();
 		if config.class_regex.is_match(line) {
 			in_class = true; //TODO actually *exit* classes too...
 		}
-		let elapsed = time::precise_time_ns() - start;
 
-		if line_number % 100 == 0 {
-			println!("{:?}", elapsed);
+		//TODO //add a tab at the start to make pre-whitespaces coherent
+		let info = Info{ 
+			path: &path,
+			line: line_number,
+			snippet: line
+		};
+
+		for test in &config.tests {
+			if test.run(line, in_header, in_class) {
+				warnings.add(&test.error, &info);
+			}
 		}
-
-		// //TODO //add a tab at the start to make pre-whitespaces coherent
-		// let info = Info{ 
-		// 	path: &path,
-		// 	line: line_number,
-		// 	snippet: line
-		// };
-
-		// for test in &config.tests {
-		// 	if let Some(warning) = test.run(line, in_header, in_class, &info) {
-		// 		warnings.push(warning);
-		// 	}
-		// }
 	}
 }
 
 fn run(config: Config) {
 	let mut paths:Vec<String> = vec![];
-	let mut warnings: Vec<Warning> = vec!();
+	let mut warnings = Warnings::default();
 
 	for root in &config.roots {
 		walk(root.as_ref(), &mut paths );
@@ -268,7 +289,7 @@ fn run(config: Config) {
 		}
 	}
 
-	println!("{:?}", warnings);
+	println!("{}", warnings);
 }
 
 fn main() {
