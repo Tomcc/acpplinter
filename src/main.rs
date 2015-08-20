@@ -100,7 +100,8 @@ impl Config {
 	}
 }
 
-fn cleaned_file_content(path: String) -> String {
+fn clean_cpp_file_content(file_content: &mut String) {
+	assert!(file_content.len() > 0);
 
 	enum State {
 		Code,
@@ -110,14 +111,7 @@ fn cleaned_file_content(path: String) -> String {
 	}
 
 	let mut state = State::Code;
-
-	let mut file = File::open(path).unwrap();		
-	let mut file_content = String::new();
-
-	file.read_to_string(&mut file_content);
-
-	//TODO ensure stuff is ASCII manually
-	unsafe {	
+	unsafe { //because as_mut_vec ignores UTF8, lol
 		let mut bytes = file_content.as_mut_vec();
 		let mut cur = bytes[0] as char;
 		for i in 1..bytes.len() {
@@ -148,9 +142,7 @@ fn cleaned_file_content(path: String) -> String {
 
 			cur = next;
 		}
-	}
-
-	file_content
+ 	}
 }
 
 fn walk(path: &str, paths: &mut Vec<String>) {
@@ -171,10 +163,28 @@ fn run(config: Config) {
 		walk(root.as_ref(), &mut paths );
 	}
 
-	//TODO this can be easily parallelized?
 	for path in paths {
 		if config.should_check(path.as_ref()) {
-			println!("{}", cleaned_file_content(path));
+
+			let mut file = File::open(&path).unwrap();		
+			let mut file_content = String::new();
+
+			file.read_to_string(&mut file_content);
+
+			//TODO ensure stuff is ASCII manually
+			if file_content.len() <= 1 {
+		 		println!("{} is empty", path);
+		 		continue;
+			}
+
+			//TODO shoot this part on a threadpool!
+			{
+				clean_cpp_file_content(&mut file_content);
+
+				for line in file_content.split('\n') {
+
+				}
+			}
 		}
 	}
 }
