@@ -1,10 +1,11 @@
 #![feature(plugin)]
 #![plugin(regex_macros)]
+#![feature(path_ext)]
 
 extern crate regex;
 extern crate rustc_serialize;
-extern crate time;
 
+use std::path::Path;
 use std::env;
 use rustc_serialize::json;
 use std::io::prelude::*;
@@ -13,6 +14,7 @@ use regex::Regex;
 use std::fs::{read_dir, metadata};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::process;
 
 fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
 	strings.iter().map(|string|{ 
@@ -243,18 +245,18 @@ fn examine(config: &Config, path: String, warnings: &mut Warnings){
 		file.read_to_string(&mut file_content);
 	}
 
-	//TODO ensure stuff is ASCII manually
 	if file_content.len() <= 1 {
  		return;
 	}
 	
+	//TODO ensure stuff is ASCII manually
 	clean_cpp_file_content(&mut file_content);
 
 	for line in file_content.split('\n') {
 		line_number += 1;
 
 		//TODO SAFE_TAG
-		if config.class_regex.is_match(line) {
+		if !in_class && config.class_regex.is_match(line) {
 			in_class = true; //TODO actually *exit* classes too...
 		}
 
@@ -273,7 +275,7 @@ fn examine(config: &Config, path: String, warnings: &mut Warnings){
 	}
 }
 
-fn run(config: Config) {
+fn run(config: Config) -> usize {
 	let mut paths:Vec<String> = vec![];
 	let mut warnings = Warnings::default();
 
@@ -289,14 +291,29 @@ fn run(config: Config) {
 		}
 	}
 
+	let count = warnings.map.iter().fold(0, |c, (_, v)| {c + v.len()});
 	println!("{}", warnings);
+	println!("Found {} issues!", count);
+
+	count
 }
 
 fn main() {
-	let path = "/Users/tommaso/DEV/Minecraftpe/mcpe-lint.json";
+	let args: Vec<String> = env::args().collect();
+	if args.len() != 2 {
+		println!("Pls provide the path to your JSON config.");
+		println!("Usage: ./acpplinter path/to/your/config.json", );
+		process::exit(0);
+	}
+	
+	let path = Path::new(&args[1]);
 
-	let rootpath = "/Users/tommaso/DEV/Minecraftpe/";
+	if !path.is_file() {
+		println!("{} is not a file, or couldn't be found!", path.display());
+		process::exit(1);
+	}
 
+	let rootpath = path.parent().unwrap();
 	assert!(env::set_current_dir(rootpath).is_ok());
 
 	if let Ok(mut file) = File::open(path) {
@@ -305,7 +322,12 @@ fn main() {
 
 		match json::decode::<ConfigDesc>(file_content.as_ref()) {
 			Ok(desc) => {
-				run(Config::from_desc(desc))
+				if run(Config::from_desc(desc)) == 0 {
+					process::exit(0);
+				}
+				else {
+					process::exit(1);
+				}
 			},
 			Err(e) => {
 				println!("Invalid JSON");
@@ -314,6 +336,6 @@ fn main() {
 		}
 	}
 	else {
-		println!("Cannot open config {}", path);
+		println!("Cannot open config {}", path.display());
 	}
 }
