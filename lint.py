@@ -165,9 +165,6 @@ def examine(path):
 			for test in tests:
 				test.run(line, isClassDefinition, isHeader, info)
 
-		if not buffer.endswith('\n'):
-			warn("All source files must end with a newline", (path, 0, ""))
-
 def openShelve(path):
 	try:
 		os.mkdir(path)
