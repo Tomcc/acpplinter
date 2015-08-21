@@ -215,7 +215,7 @@ fn clean_cpp_file_content(file_content: &mut String) {
 			let next = bytes[i] as char;
 
 			state = match state {
-				State::Code if (cur == '/' && next == '/') || next == '#' 
+				State::Code if cur == '/' && next == '/'
 					=> State::SkipLine,
 				State::Code if cur == '"'
 					=> State::String,

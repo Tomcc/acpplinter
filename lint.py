@@ -102,7 +102,7 @@ def clean(buffer):
 		next = buffer[i+1]
 
 		if state == STATE_CODE:
-			if (curr == '/' and next == '/') or curr == '#':
+			if curr == '/' and next == '/':
 				state = STATE_SKIP_LINE
 			elif curr == '"':
 				state = STATE_STRING
