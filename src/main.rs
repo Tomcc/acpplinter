@@ -1,12 +1,13 @@
 #![feature(plugin)]
 #![plugin(regex_macros)]
-#![feature(path_ext)]
 
 extern crate threadpool;
 extern crate num_cpus;
 extern crate regex;
 extern crate rustc_serialize;
+extern crate clap;
 
+use clap::{Arg, App};
 use threadpool::ThreadPool;
 use std::path::Path;
 use std::env;
@@ -335,14 +336,17 @@ fn run(config: Config) -> usize {
 }
 
 fn main() {
-	let args: Vec<String> = env::args().collect();
-	if args.len() != 2 {
-		println!("Pls provide the path to your JSON config.");
-		println!("Usage: ./acpplinter path/to/your/config.json", );
-		process::exit(0);
-	}
-	
-	let path = Path::new(&args[1]);
+	let matches = App::new("A cpp linter")
+		.version("0.1")
+		.about("Still pretty incomplete")
+		.arg(Arg::with_name("JSON_PATH")
+			.help("A JSON file containing the lints to apply to the program and the folders to scan")
+			.value_name("Config File Path")
+			.takes_value(true)
+			.required(true))
+		.get_matches();
+
+	let path = Path::new(matches.value_of("input").unwrap());
 
 	if !path.is_file() {
 		println!("{} is not a file, or couldn't be found!", path.display());
