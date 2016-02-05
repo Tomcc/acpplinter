@@ -9,7 +9,7 @@ extern crate clap;
 
 use clap::{Arg, App};
 use threadpool::ThreadPool;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::env;
 use rustc_serialize::json;
 use std::io::prelude::*;
@@ -20,6 +20,17 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::process;
 use std::sync::mpsc;
+
+fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
+    let canonical = try!(std::fs::canonicalize(path));
+    if canonical.is_absolute() {
+        return Ok(canonical);
+    }
+
+    let mut root = try!(std::env::current_dir());
+    root.push(&canonical);
+    Ok(root)
+}
 
 fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
     strings.iter()
@@ -71,9 +82,9 @@ struct Warnings {
 }
 
 impl Warnings {
-    fn add(&mut self, message: &String, info: &Info) {
+    fn add(&mut self, message: &str, info: &Info) {
         if !self.map.contains_key(message) {
-            self.map.insert(message.clone(), vec![Warning::new(info)]);
+            self.map.insert(message.to_owned(), vec![Warning::new(info)]);
         } else {
             self.map.get_mut(message).unwrap().push(Warning::new(info));
         }
@@ -260,9 +271,16 @@ fn examine(config: &Config, path: String) -> Warnings {
     let in_header = path.ends_with(".h");
     let mut line_number = 0;
 
-    {
-        let mut file = File::open(&path).unwrap();
-        file.read_to_string(&mut file_content).unwrap();
+    let mut file = File::open(&path).unwrap();
+    let result = file.read_to_string(&mut file_content);
+
+    if result.is_err() {
+        warnings.add("This file contains invalid UTF8", &Info {
+            path: &path,
+            line: 0,
+            snippet: "",
+        });
+        return warnings;
     }
 
     if file_content.len() <= 1 {
@@ -357,8 +375,8 @@ fn main() {
     }
 
     let rootpath = match matches.value_of("root_path") {
-        Some(value) => Path::new(value),
-        None => path.parent().unwrap(),
+        Some(value) => PathBuf::from(value),
+        None => to_absolute_path(path).unwrap().parent().unwrap().to_path_buf(),
     };
 
     if let Ok(mut file) = File::open(path) {
