@@ -360,8 +360,6 @@ fn main() {
         None => path.parent().unwrap(),
     };
 
-    println!("{:?}", rootpath);
-
     assert!(env::set_current_dir(rootpath).is_ok());
 
     if let Ok(mut file) = File::open(path) {
