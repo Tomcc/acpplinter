@@ -343,7 +343,8 @@ fn main() {
                                .takes_value(true)
                                .required(true))
                       .arg(Arg::with_name("root_path")
-                               .help("The folder where to look for the code. Omitting it will default to the Json file's folder")
+                               .help("The folder where to look for the code. Omitting it will \
+                                      default to the Json file's folder")
                                .value_name("Root path")
                                .takes_value(true))
                       .get_matches();
@@ -360,9 +361,9 @@ fn main() {
         None => path.parent().unwrap(),
     };
 
-    assert!(env::set_current_dir(rootpath).is_ok());
-
     if let Ok(mut file) = File::open(path) {
+        assert!(env::set_current_dir(rootpath).is_ok());
+
         let mut file_content = String::new();
         file.read_to_string(&mut file_content).unwrap();
 
