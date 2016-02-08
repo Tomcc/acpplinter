@@ -131,7 +131,8 @@ struct ConfigDesc {
     roots: Vec<String>,
     excludes: Option<Vec<String>>,
     includes: Option<Vec<String>>,
-    incremental: Option<bool>,
+    removeStrings: Option<bool>,
+    removeComments: Option<bool>,
     tests: Vec<TestDesc>,
     safeTag: Option<String>,
 }
@@ -180,7 +181,8 @@ struct Config {
     roots: Vec<String>,
     excludes: Vec<Regex>,
     includes: Vec<Regex>,
-    incremental: bool,
+    remove_strings: bool,
+    remove_comments: bool,
     tests: Vec<Test>,
     safe_tag: String,
 
@@ -193,7 +195,8 @@ impl Config {
             roots: desc.roots,
             excludes: to_regex_array(&desc.excludes.unwrap_or_default()),
             includes: to_regex_array(&desc.includes.unwrap_or_default()),
-            incremental: desc.incremental.unwrap_or(false),
+            remove_strings: desc.removeStrings.unwrap_or(true),
+            remove_comments: desc.removeComments.unwrap_or(true),
             tests: desc.tests
                        .into_iter()
                        .map(|td| Test::from_desc(td))
@@ -208,7 +211,7 @@ impl Config {
     }
 }
 
-fn clean_cpp_file_content(file_content: &mut String) {
+fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     assert!(file_content.len() > 0);
 
     enum State {
@@ -227,9 +230,9 @@ fn clean_cpp_file_content(file_content: &mut String) {
             let next = bytes[i] as char;
 
             state = match state {
-                State::Code if cur == '/' && next == '/' => State::SkipLine,
-                State::Code if cur == '"' => State::String,
-                State::Code if cur == '/' && next == '*' => State::MultiLine,
+                State::Code if config.remove_comments && cur == '/' && next == '/' => State::SkipLine,
+                State::Code if config.remove_strings && cur == '"' => State::String,
+                State::Code if config.remove_comments && cur == '/' && next == '*' => State::MultiLine,
                 State::Code => State::Code,
 
                 State::SkipLine if next == '\n' => State::Code,
@@ -288,7 +291,7 @@ fn examine(config: &Config, path: String) -> Warnings {
     }
 
     // TODO ensure stuff is ASCII manually
-    clean_cpp_file_content(&mut file_content);
+    clean_cpp_file_content(config, &mut file_content);
 
     for line in file_content.split('\n') {
         line_number += 1;
