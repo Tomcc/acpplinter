@@ -58,6 +58,7 @@ struct Warning {
     path: String,
     line: usize,
     snippet: String,
+    blame: Option<String>,
 }
 
 impl Warning {
@@ -66,13 +67,17 @@ impl Warning {
             path: info.path.clone(),
             line: info.line,
             snippet: info.snippet.to_owned(),
+            blame: None,
         }
     }
 }
 
 impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "\t{}:{}\t\t{}", self.path, self.line, self.snippet)
+        match self.blame {
+            Some(ref blame) => write!(f, "\t{}\t\t{}", blame, self.snippet),
+            None => write!(f, "\t{}:{}\t\t{}", self.path, self.line, self.snippet),
+        }
     }
 }
 
@@ -92,15 +97,20 @@ impl Warnings {
 
     fn add_map(&mut self, other: Warnings) {
         for (k, v) in other.map {
-            if self.map.contains_key(&k) {
-                let mut vec = self.map.get_mut(&k).unwrap();
+            if let Some(mut vec) = self.map.get_mut(&k) {
                 for elem in v {
+                    //println!("{}", elem);
                     vec.push(elem);
                 }
-            } else {
-                self.map.insert(k.clone(), v);
-            }
+                return;
+            } 
+
+            self.map.insert(k.clone(), v);
         }
+    }
+
+    fn len(&self) -> usize {
+        self.map.len()
     }
 }
 
@@ -230,9 +240,13 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
             let next = bytes[i] as char;
 
             state = match state {
-                State::Code if config.remove_comments && cur == '/' && next == '/' => State::SkipLine,
+                State::Code if config.remove_comments && cur == '/' && next == '/' => {
+                    State::SkipLine
+                }
                 State::Code if config.remove_strings && cur == '"' => State::String,
-                State::Code if config.remove_comments && cur == '/' && next == '*' => State::MultiLine,
+                State::Code if config.remove_comments && cur == '/' && next == '*' => {
+                    State::MultiLine
+                }
                 State::Code => State::Code,
 
                 State::SkipLine if next == '\n' => State::Code,
@@ -278,11 +292,12 @@ fn examine(config: &Config, path: String) -> Warnings {
     let result = file.read_to_string(&mut file_content);
 
     if result.is_err() {
-        warnings.add("This file contains invalid UTF8", &Info {
-            path: &path,
-            line: 0,
-            snippet: "",
-        });
+        warnings.add("This file contains invalid UTF8",
+                     &Info {
+                         path: &path,
+                         line: 0,
+                         snippet: "",
+                     });
         return warnings;
     }
 
@@ -311,6 +326,24 @@ fn examine(config: &Config, path: String) -> Warnings {
         for test in &config.tests {
             if test.run(line, in_header, in_class) {
                 warnings.add(&test.error, &info);
+            }
+        }
+    }
+
+    // if any warning was emitted, see if a blame file is present
+    // in which case, attach the blame information to the warnings
+    if warnings.len() > 0 {
+        let blame_path = path.to_owned() + ".blame";
+        if let Ok(mut file) = File::open(blame_path) {
+            file_content.clear();
+            file.read_to_string(&mut file_content).unwrap();
+
+            let lines: Vec<&str> = file_content.split('\n').collect();
+
+            for (name, mut list) in &mut warnings.map {
+                for w in list {
+                    w.blame = Some(lines[w.line].to_owned());
+                }
             }
         }
     }
