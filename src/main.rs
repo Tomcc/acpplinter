@@ -1,6 +1,3 @@
-#![feature(plugin)]
-#![plugin(regex_macros)]
-
 extern crate threadpool;
 extern crate num_cpus;
 extern crate regex;
@@ -211,8 +208,8 @@ impl Config {
                        .into_iter()
                        .map(|td| Test::from_desc(td))
                        .collect(),
-            safe_tag: desc.safeTag.unwrap_or("/*SAFE_TAG*/".to_owned()),
-            class_regex: regex!("(^|\\s)+class\\s+[^;]*$"),
+            safe_tag: desc.safeTag.unwrap_or("/*safe*/".to_owned()),
+            class_regex: Regex::new("(^|\\s)+class\\s+[^;]*$").unwrap(),
         }
     }
 
