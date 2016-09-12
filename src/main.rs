@@ -384,6 +384,10 @@ fn run(config: Config) -> usize {
 }
 
 fn main() {
+
+    //let dev_path: Option<PathBuf> = Some(PathBuf::from("C:/Users/tommaso/DEV/Minecraftpe/mcpe-lint.json"));
+    let dev_path: Option<PathBuf> = None;
+
     let matches = App::new("A cpp linter")
                       .version("0.1")
                       .about("Still pretty incomplete")
@@ -392,7 +396,7 @@ fn main() {
                                       and the folders to scan")
                                .value_name("Config File Path")
                                .takes_value(true)
-                               .required(true))
+                               .required(!dev_path.is_some()))
                       .arg(Arg::with_name("root_path")
                                .help("The folder where to look for the code. Omitting it will \
                                       default to the Json file's folder")
@@ -400,8 +404,11 @@ fn main() {
                                .takes_value(true))
                       .get_matches();
 
-    let path = Path::new(matches.value_of("JSON_PATH").unwrap());
-
+    let path = match matches.value_of("JSON_PATH") {
+        Some(input) => PathBuf::from(input),
+        None => dev_path.unwrap()
+    };
+    
     if !path.is_file() {
         println!("{} is not a file, or couldn't be found!", path.display());
         process::exit(1);
@@ -409,10 +416,10 @@ fn main() {
 
     let rootpath = match matches.value_of("root_path") {
         Some(value) => PathBuf::from(value),
-        None => to_absolute_path(path).unwrap().parent().unwrap().to_path_buf(),
+        None => to_absolute_path(&path).unwrap().parent().unwrap().to_path_buf(),
     };
 
-    if let Ok(mut file) = File::open(path) {
+    if let Ok(mut file) = File::open(path.as_path()) {
         assert!(env::set_current_dir(rootpath).is_ok());
 
         let mut file_content = String::new();
