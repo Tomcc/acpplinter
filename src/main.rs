@@ -114,10 +114,10 @@ impl Warnings {
 impl fmt::Display for Warnings {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for (k, v) in &self.map {
-            write!(f, "\n#### {}\n\n", k);
+            write!(f, "\n#### {}\n\n", k).unwrap();
 
             for warning in v {
-                write!(f, "{}\n", warning);
+                write!(f, "{}\n", warning).unwrap();
             }
         }
         Ok(())
@@ -125,6 +125,7 @@ impl fmt::Display for Warnings {
 }
 
 #[derive(RustcDecodable, Debug)]
+#[allow(non_snake_case)]
 struct TestDesc {
     fail: Vec<String>,
     allow: Option<Vec<String>>,
@@ -134,6 +135,7 @@ struct TestDesc {
 }
 
 #[derive(RustcDecodable, Debug)]
+#[allow(non_snake_case)]
 struct ConfigDesc {
     roots: Vec<String>,
     excludes: Option<Vec<String>>,
@@ -191,7 +193,7 @@ struct Config {
     remove_strings: bool,
     remove_comments: bool,
     tests: Vec<Test>,
-    safe_tag: String,
+    safe_tag_regex: Regex,
 
     class_regex: Regex,
 }
@@ -208,7 +210,7 @@ impl Config {
                        .into_iter()
                        .map(|td| Test::from_desc(td))
                        .collect(),
-            safe_tag: desc.safeTag.unwrap_or("/*safe*/".to_owned()),
+            safe_tag_regex: Regex::new(".*/\\*safe\\*/.*").unwrap(),
             class_regex: Regex::new("(^|\\s)+class\\s+[^;]*$").unwrap(),
         }
     }
@@ -220,6 +222,9 @@ impl Config {
 
 fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     assert!(file_content.len() > 0);
+
+    //remove all lines containing a safe tag
+    *file_content = config.safe_tag_regex.replace_all(&file_content, "");
 
     enum State {
         Code,
@@ -308,7 +313,6 @@ fn examine(config: &Config, path: String) -> Warnings {
     for line in file_content.split('\n') {
         line_number += 1;
 
-        // TODO SAFE_TAG
         if !in_class && config.class_regex.is_match(line) {
             in_class = true; //TODO actually *exit* classes too...
         }
@@ -337,7 +341,7 @@ fn examine(config: &Config, path: String) -> Warnings {
 
             let lines: Vec<&str> = file_content.split('\n').collect();
 
-            for (name, mut list) in &mut warnings.map {
+            for (_, list) in &mut warnings.map {
                 for w in list {
                     w.blame = Some(lines[w.line].to_owned());
                 }
