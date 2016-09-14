@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::env;
 use rustc_serialize::json;
 use std::io::prelude::*;
+use std::io;
 use std::fs::File;
 use regex::Regex;
 use std::fs::{read_dir, metadata};
@@ -352,7 +353,7 @@ fn examine(config: &Config, path: String) -> Warnings {
     warnings
 }
 
-fn run(config: Config) -> usize {
+fn run<W: Write>(config: Config, output: &mut W) -> usize {
     let mut paths: Vec<String> = vec![];
     let pool = ThreadPool::new(num_cpus::get());
 
@@ -381,10 +382,21 @@ fn run(config: Config) -> usize {
     });
 
     let count = warnings.map.iter().fold(0, |c, (_, v)| c + v.len());
-    println!("{}", warnings);
-    println!("Found {} issues!", count);
+    write!(output, "{}", warnings).unwrap();
+    writeln!(output, "Found {} issues!", count).unwrap();
 
     count
+}
+
+fn open_output(maybe_path: Option<&str>) -> Box<Write> {
+    if let Some(path) = maybe_path {
+        if let Ok(file) = File::create(path) {
+            return Box::new(file);
+        }
+        println!("Cannot open file at {}, defaulting to stdout", path);
+    }
+    
+    return Box::new(io::stdout());
 }
 
 fn main() {
@@ -405,6 +417,14 @@ fn main() {
                                .help("The folder where to look for the code. Omitting it will \
                                       default to the Json file's folder")
                                .value_name("Root path")
+                               .short("r")
+                               .long("root_path")
+                               .takes_value(true))
+                      .arg(Arg::with_name("output")
+                               .help("The path of the output file. Defaults to stdout if not provided.")
+                               .value_name("Output file")
+                               .short("o")
+                               .long("output")
                                .takes_value(true))
                       .get_matches();
 
@@ -423,6 +443,8 @@ fn main() {
         None => to_absolute_path(&path).unwrap().parent().unwrap().to_path_buf(),
     };
 
+    let mut output = open_output(matches.value_of("output"));
+
     if let Ok(mut file) = File::open(path.as_path()) {
         assert!(env::set_current_dir(rootpath).is_ok());
 
@@ -431,7 +453,7 @@ fn main() {
 
         match json::decode::<ConfigDesc>(file_content.as_ref()) {
             Ok(desc) => {
-                if run(Config::from_desc(desc)) == 0 {
+                if run(Config::from_desc(desc), &mut output) == 0 {
                     process::exit(0);
                 } else {
                     process::exit(1);
