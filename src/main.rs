@@ -36,9 +36,9 @@ fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
            .collect()
 }
 
-fn matches_any(string: &str, exps: &Vec<Regex>) -> bool {
+fn matches_any(path: &Path, exps: &Vec<Regex>) -> bool {
     for r in exps {
-        if r.is_match(string) {
+        if r.is_match(&path.to_string_lossy()) {
             return true;
         }
     }
@@ -46,14 +46,14 @@ fn matches_any(string: &str, exps: &Vec<Regex>) -> bool {
 }
 
 struct Info<'a> {
-    path: &'a String,
+    path: PathBuf,
     line: usize,
     snippet: &'a str,
 }
 
 #[derive(Debug)]
 struct Warning {
-    path: String,
+    path: PathBuf,
     line: usize,
     snippet: String,
     blame: Option<String>,
@@ -74,7 +74,7 @@ impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.blame {
             Some(ref blame) => write!(f, "\t{}\t\t{}", blame, self.snippet),
-            None => write!(f, "\t{}:{}\t\t{}", self.path, self.line, self.snippet),
+            None => write!(f, "\t{}:{}\t\t{}", self.path.display(), self.line, self.snippet),
         }
     }
 }
@@ -133,6 +133,7 @@ struct TestDesc {
     error: String,
     classOnly: Option<bool>,
     headerOnly: Option<bool>,
+    folder_matches: Option<Vec<String>> 
 }
 
 #[derive(RustcDecodable, Debug)]
@@ -154,6 +155,7 @@ struct Test {
     error: String,
     class_only: bool,
     header_only: bool,
+    folder_matches: Vec<Regex>,
 }
 
 impl Test {
@@ -164,11 +166,16 @@ impl Test {
             error: desc.error.clone(),
             class_only: desc.classOnly.unwrap_or(false),
             header_only: desc.headerOnly.unwrap_or(false),
+            folder_matches: to_regex_array(&desc.folder_matches.unwrap_or_default()),
         }
     }
 
-    fn run(&self, line: &str, header: bool, class: bool) -> bool {
+    fn run(&self, line: &str, header: bool, class: bool, path: &Path) -> bool {
         if (self.class_only && !class) || (self.header_only && !header) {
+            return false;
+        }
+
+        if self.folder_matches.len() > 0 && !matches_any(path, &self.folder_matches) {
             return false;
         }
 
@@ -216,7 +223,7 @@ impl Config {
         }
     }
 
-    fn should_check(&self, path: &str) -> bool {
+    fn should_check(&self, path: &Path) -> bool {
         matches_any(&path, &self.includes) && !matches_any(&path, &self.excludes)
     }
 }
@@ -276,14 +283,14 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     }
 }
 
-fn walk(path: &str, paths: &mut Vec<String>) {
+fn walk(path: &Path, paths: &mut Vec<PathBuf>) {
     if let Ok(dir_entries) = read_dir(path) {
         for entry in dir_entries {
             let entry = entry.unwrap();
             if metadata(&entry.path()).unwrap().is_dir() {
-                walk(&entry.path().to_str().unwrap(), paths);
+                walk(&entry.path(), paths);
             } else {
-                paths.push(entry.path().as_path().to_str().unwrap().to_owned());
+                paths.push(entry.path().to_path_buf());
             }
         }
     } else {
@@ -291,7 +298,7 @@ fn walk(path: &str, paths: &mut Vec<String>) {
     }
 }
 
-fn examine(config: &Config, path: String) -> Warnings {
+fn examine(config: &Config, path: &Path) -> Warnings {
     let mut warnings = Warnings::default();
 
     let mut file_content = String::new();
@@ -306,7 +313,7 @@ fn examine(config: &Config, path: String) -> Warnings {
     if result.is_err() {
         warnings.add("This file contains invalid UTF8",
                      &Info {
-                         path: &path,
+                         path: path.to_path_buf(),
                          line: 0,
                          snippet: "",
                      });
@@ -329,13 +336,13 @@ fn examine(config: &Config, path: String) -> Warnings {
 
         // TODO //add a tab at the start to make pre-whitespaces coherent
         let info = Info {
-            path: &path,
+            path: path.to_path_buf(),
             line: line_number,
             snippet: line,
         };
 
         for test in &config.tests {
-            if test.run(line, in_header, in_class) {
+            if test.run(line, in_header, in_class, path) {
                 warnings.add(&test.error, &info);
             }
         }
@@ -344,7 +351,7 @@ fn examine(config: &Config, path: String) -> Warnings {
     // if any warning was emitted, see if a blame file is present
     // in which case, attach the blame information to the warnings
     if warnings.len() > 0 {
-        let blame_path = path.to_owned() + ".blame";
+        let blame_path =  path.to_str().unwrap().to_owned() + ".blame";
         if let Ok(mut file) = File::open(blame_path) {
             file_content.clear();
             file.read_to_string(&mut file_content).unwrap();
@@ -363,7 +370,7 @@ fn examine(config: &Config, path: String) -> Warnings {
 }
 
 fn run<W: Write>(config: Config, output: &mut W) -> usize {
-    let mut paths: Vec<String> = vec![];
+    let mut paths: Vec<PathBuf> = vec![];
     let pool = ThreadPool::new(num_cpus::get());
 
     for root in &config.roots {
@@ -374,13 +381,13 @@ fn run<W: Write>(config: Config, output: &mut W) -> usize {
 
     let mut task_count = 0;
     for path in paths {
-        if config.should_check(path.as_ref()) {
+        if config.should_check(&path) {
             task_count += 1;
             let config = config.clone();
             let sender = sender.clone();
 
             pool.execute(move || {
-                sender.send(examine(&config, path)).unwrap();
+                sender.send(examine(&config, &path)).unwrap();
             });
         }
     }
