@@ -230,6 +230,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     enum State {
         Code,
         SkipLine,
+        Preprocessor,
         String,
         MultiLine,
     }
@@ -250,8 +251,16 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
                 State::Code if config.remove_comments && cur == '/' && next == '*' => {
                     State::MultiLine
                 }
+                State::Code if cur == '#' => State::Preprocessor,
+
+                //Preprocessor state: remain in the state until \n is found
+                State::Preprocessor if next == '\n' => State::Code,
+                State::Preprocessor => State::Preprocessor,
+
+                //unknown character: remain in Code state
                 State::Code => State::Code,
 
+                //after this line, all iterations on one of these states cause X to be written in replacement
                 State::SkipLine if next == '\n' => State::Code,
                 State::String if cur == '"' => State::Code,
                 State::MultiLine if cur == '*' && next == '/' => State::Code,
