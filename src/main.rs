@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::process;
 use std::sync::mpsc;
+use std::borrow::Cow;
 
 fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
     let canonical = try!(std::fs::canonicalize(path));
@@ -36,9 +37,19 @@ fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
            .collect()
 }
 
+fn to_unix_string(path: &Path) -> Cow<str> {
+    let mut string = path.to_string_lossy();
+
+    if let Some(_) = string.as_ref().find('\\') {
+        string = Cow::Owned(string.as_ref().replace("\\", "/"));
+    }
+
+    return string;
+}
+
 fn matches_any(path: &Path, exps: &Vec<Regex>) -> bool {
     for r in exps {
-        if r.is_match(&path.to_string_lossy()) {
+        if r.is_match(&to_unix_string(path)) {
             return true;
         }
     }
@@ -133,7 +144,8 @@ struct TestDesc {
     error: String,
     classOnly: Option<bool>,
     headerOnly: Option<bool>,
-    folder_matches: Option<Vec<String>> 
+    include_paths: Option<Vec<String>>,
+    exclude_paths: Option<Vec<String>>,
 }
 
 #[derive(RustcDecodable, Debug)]
@@ -155,7 +167,8 @@ struct Test {
     error: String,
     class_only: bool,
     header_only: bool,
-    folder_matches: Vec<Regex>,
+    include_paths: Vec<Regex>,
+    exclude_paths: Vec<Regex>,
 }
 
 impl Test {
@@ -166,7 +179,8 @@ impl Test {
             error: desc.error.clone(),
             class_only: desc.classOnly.unwrap_or(false),
             header_only: desc.headerOnly.unwrap_or(false),
-            folder_matches: to_regex_array(&desc.folder_matches.unwrap_or_default()),
+            include_paths: to_regex_array(&desc.include_paths.unwrap_or_default()),
+            exclude_paths: to_regex_array(&desc.exclude_paths.unwrap_or_default()),
         }
     }
 
@@ -175,7 +189,11 @@ impl Test {
             return false;
         }
 
-        if self.folder_matches.len() > 0 && !matches_any(path, &self.folder_matches) {
+        if self.include_paths.len() > 0 && !matches_any(path, &self.include_paths) {
+            return false;
+        }
+
+        if self.exclude_paths.len() > 0 && matches_any(path, &self.exclude_paths) {
             return false;
         }
 
