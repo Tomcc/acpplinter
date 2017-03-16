@@ -33,8 +33,8 @@ fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
 
 fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
     strings.iter()
-           .map(|string| Regex::new(string.as_ref()).unwrap())
-           .collect()
+        .map(|string| Regex::new(string.as_ref()).unwrap())
+        .collect()
 }
 
 fn to_unix_string(path: &Path) -> Cow<str> {
@@ -85,7 +85,13 @@ impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.blame {
             Some(ref blame) => write!(f, "\t{}\t\t{}", blame, self.snippet),
-            None => write!(f, "\t{}:{}\t\t{}", self.path.display(), self.line, self.snippet),
+            None => {
+                write!(f,
+                       "\t{}:{}\t\t{}",
+                       self.path.display(),
+                       self.line,
+                       self.snippet)
+            }
         }
     }
 }
@@ -112,7 +118,7 @@ impl Warnings {
                     vec.push(elem);
                 }
                 return;
-            } 
+            }
 
             self.map.insert(k.clone(), v);
         }
@@ -233,9 +239,9 @@ impl Config {
             remove_strings: desc.removeStrings.unwrap_or(true),
             remove_comments: desc.removeComments.unwrap_or(true),
             tests: desc.tests
-                       .into_iter()
-                       .map(|td| Test::from_desc(td))
-                       .collect(),
+                .into_iter()
+                .map(|td| Test::from_desc(td))
+                .collect(),
             safe_tag_regex: Regex::new(".*/\\*safe\\*/.*").unwrap(),
             class_regex: Regex::new("(^|\\s)+class\\s+[^;]*$").unwrap(),
         }
@@ -250,7 +256,9 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     assert!(file_content.len() > 0);
 
     //remove all lines containing a safe tag
-    *file_content = config.safe_tag_regex.replace_all(&file_content, "");
+    if let Cow::Owned(modified) = config.safe_tag_regex.replace_all(&file_content, "") {
+        *file_content = modified.to_owned();
+    }
 
     enum State {
         Code,
@@ -264,9 +272,10 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     unsafe {
         // because as_mut_vec ignores UTF8, lol
         let mut bytes = file_content.as_mut_vec();
-        let mut cur = bytes[0] as char;
-        for i in 1..bytes.len() {
-            let next = bytes[i] as char;
+        let mut i = 0;
+        while i < bytes.len() - 1 {
+            let cur = bytes[i] as char;
+            let next = bytes[i + 1] as char;
 
             state = match state {
                 State::Code if config.remove_comments && cur == '/' && next == '/' => {
@@ -287,16 +296,21 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
 
                 //after this line, all iterations on one of these states cause X to be written in replacement
                 State::SkipLine if next == '\n' => State::Code,
+                State::String if cur == '\\' => {
+                    //escape char, skip next
+                    bytes[i] = 'X' as u8;
+                    i += 1;
+                    bytes[i] = 'X' as u8;
+                    State::String
+                }
                 State::String if cur == '"' => State::Code,
                 State::MultiLine if cur == '*' && next == '/' => State::Code,
-                _ if next != '\n' => {
+                _ => {
                     bytes[i] = 'X' as u8;
                     state
                 }
-                _ => state,
             };
-
-            cur = next;
+            i += 1;
         }
     }
 }
@@ -369,7 +383,7 @@ fn examine(config: &Config, path: &Path) -> Warnings {
     // if any warning was emitted, see if a blame file is present
     // in which case, attach the blame information to the warnings
     if warnings.len() > 0 {
-        let blame_path =  path.to_str().unwrap().to_owned() + ".blame";
+        let blame_path = path.to_str().unwrap().to_owned() + ".blame";
         if let Ok(mut file) = File::open(blame_path) {
             file_content.clear();
             file.read_to_string(&mut file_content).unwrap();
@@ -404,9 +418,7 @@ fn run<W: Write>(config: Config, output: &mut W) -> usize {
             let config = config.clone();
             let sender = sender.clone();
 
-            pool.execute(move || {
-                sender.send(examine(&config, &path)).unwrap();
-            });
+            pool.execute(move || { sender.send(examine(&config, &path)).unwrap(); });
         }
     }
 
@@ -429,7 +441,7 @@ fn open_output(maybe_path: Option<&str>) -> Box<Write> {
         }
         println!("Cannot open file at {}, defaulting to stdout", path);
     }
-    
+
     return Box::new(io::stdout());
 }
 
@@ -439,34 +451,34 @@ fn main() {
     let dev_path: Option<PathBuf> = None;
 
     let matches = App::new("A cpp linter")
-                      .version("0.1")
-                      .about("Still pretty incomplete")
-                      .arg(Arg::with_name("JSON_PATH")
-                               .help("A JSON file containing the lints to apply to the program \
-                                      and the folders to scan")
-                               .value_name("Config File Path")
-                               .takes_value(true)
-                               .required(!dev_path.is_some()))
-                      .arg(Arg::with_name("root_path")
-                               .help("The folder where to look for the code. Omitting it will \
-                                      default to the Json file's folder")
-                               .value_name("Root path")
-                               .short("r")
-                               .long("root_path")
-                               .takes_value(true))
-                      .arg(Arg::with_name("output")
-                               .help("The path of the output file. Defaults to stdout if not provided.")
-                               .value_name("Output file")
-                               .short("o")
-                               .long("output")
-                               .takes_value(true))
-                      .get_matches();
+        .version("0.1")
+        .about("Still pretty incomplete")
+        .arg(Arg::with_name("JSON_PATH")
+            .help("A JSON file containing the lints to apply to the program and the folders to \
+                   scan")
+            .value_name("Config File Path")
+            .takes_value(true)
+            .required(!dev_path.is_some()))
+        .arg(Arg::with_name("root_path")
+            .help("The folder where to look for the code. Omitting it will default to the Json \
+                   file's folder")
+            .value_name("Root path")
+            .short("r")
+            .long("root_path")
+            .takes_value(true))
+        .arg(Arg::with_name("output")
+            .help("The path of the output file. Defaults to stdout if not provided.")
+            .value_name("Output file")
+            .short("o")
+            .long("output")
+            .takes_value(true))
+        .get_matches();
 
     let path = match matches.value_of("JSON_PATH") {
         Some(input) => PathBuf::from(input),
-        None => dev_path.unwrap()
+        None => dev_path.unwrap(),
     };
-    
+
     if !path.is_file() {
         println!("{} is not a file, or couldn't be found!", path.display());
         process::exit(1);
