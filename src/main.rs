@@ -502,19 +502,17 @@ fn open_output(maybe_path: Option<&str>) -> Box<Write> {
 }
 
 fn main() {
-
-    //let dev_path: Option<PathBuf> = Some(PathBuf::from("C:/Users/tommaso/DEV/Minecraftpe/mcpe-lint.json"));
-    let dev_path: Option<PathBuf> = None;
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     let matches = App::new("A cpp linter")
-        .version("0.1")
+        .version(VERSION)
         .about("Still pretty incomplete")
         .arg(Arg::with_name("JSON_PATH")
             .help("A JSON file containing the lints to apply to the program and the folders to \
                    scan")
             .value_name("Config File Path")
             .takes_value(true)
-            .required(!dev_path.is_some()))
+            .required(true))
         .arg(Arg::with_name("root_path")
             .help("The folder where to look for the code. Omitting it will default to the Json \
                    file's folder")
@@ -530,10 +528,7 @@ fn main() {
             .takes_value(true))
         .get_matches();
 
-    let path = match matches.value_of("JSON_PATH") {
-        Some(input) => PathBuf::from(input),
-        None => dev_path.unwrap(),
-    };
+    let path = PathBuf::from(matches.value_of("JSON_PATH").unwrap());
 
     if !path.is_file() {
         println!("{} is not a file, or couldn't be found!", path.display());
@@ -544,6 +539,8 @@ fn main() {
         Some(value) => PathBuf::from(value),
         None => to_absolute_path(&path).unwrap().parent().unwrap().to_path_buf(),
     };
+
+    println!("Running acpplinter {}", VERSION);
 
     let mut output = open_output(matches.value_of("output"));
 
