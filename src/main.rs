@@ -58,15 +58,15 @@ fn matches_any(path: &Path, exps: &Vec<Regex>) -> bool {
 
 struct Info<'a> {
     path: PathBuf,
-    line: usize,
-    snippet: &'a str,
+    line: Option<usize>,
+    snippet: Option<&'a str>,
 }
 
 #[derive(Debug)]
 struct Warning {
     path: PathBuf,
-    line: usize,
-    snippet: String,
+    line: Option<usize>,
+    snippet: Option<String>,
     blame: Option<String>,
 }
 
@@ -75,22 +75,33 @@ impl Warning {
         Warning {
             path: info.path.clone(),
             line: info.line,
-            snippet: info.snippet.to_owned(),
             blame: None,
+            snippet: match info.snippet {
+                Some(snippet) => Some(snippet.to_owned()),
+                None => None,
+            }
         }
     }
 }
 
 impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.blame {
-            Some(ref blame) => write!(f, "\t{}\t\t{}", blame, self.snippet),
-            None => {
-                write!(f,
-                       "\t{}:{}\t\t{}",
-                       self.path.display(),
-                       self.line,
-                       self.snippet)
+
+        write!(f, "\t")?;
+
+        if let Some(ref blame) = self.blame {
+            write!(f, "{}\t\t{}", blame, self.snippet.as_ref().unwrap()) //snippet must exist if there is a blame
+        }
+        else {
+            if let Some(ref line) = self.line {
+                write!(f, "{}:{}\t\t{}", 
+                    self.path.display(),
+                    line,
+                    self.snippet.as_ref().unwrap()  //snippet must exist if there is a line
+                )
+            }
+            else {
+                write!(f, "{}", self.path.display())
             }
         }
     }
@@ -142,6 +153,12 @@ impl fmt::Display for Warnings {
     }
 }
 
+#[derive(RustcDecodable, Debug, Clone, Default)]
+struct ExpectedFailsDesc {
+    exactly: u32,
+    //TODO greater than and less than?
+}
+
 #[derive(RustcDecodable, Debug)]
 #[allow(non_snake_case)]
 struct TestDesc {
@@ -152,6 +169,7 @@ struct TestDesc {
     headerOnly: Option<bool>,
     include_paths: Option<Vec<String>>,
     exclude_paths: Option<Vec<String>>,
+    expected_fails: Option<ExpectedFailsDesc>,
 }
 
 #[derive(RustcDecodable, Debug)]
@@ -175,6 +193,7 @@ struct Test {
     header_only: bool,
     include_paths: Vec<Regex>,
     exclude_paths: Vec<Regex>,
+    expected_fails: ExpectedFailsDesc,
 }
 
 impl Test {
@@ -187,19 +206,23 @@ impl Test {
             header_only: desc.headerOnly.unwrap_or(false),
             include_paths: to_regex_array(&desc.include_paths.unwrap_or_default()),
             exclude_paths: to_regex_array(&desc.exclude_paths.unwrap_or_default()),
+            expected_fails: desc.expected_fails.unwrap_or_default(),
         }
     }
 
-    fn run(&self, line: &str, header: bool, class: bool, path: &Path) -> bool {
-        if (self.class_only && !class) || (self.header_only && !header) {
-            return false;
-        }
-
+    fn runs_on_path(&self, path: &Path) -> bool {
         if self.include_paths.len() > 0 && !matches_any(path, &self.include_paths) {
             return false;
         }
 
         if self.exclude_paths.len() > 0 && matches_any(path, &self.exclude_paths) {
+            return false;
+        }
+        return true;
+    }
+
+    fn run(&self, line: &str, header: bool, class: bool) -> bool {
+        if (self.class_only && !class) || (self.header_only && !header) {
             return false;
         }
 
@@ -346,8 +369,8 @@ fn examine(config: &Config, path: &Path) -> Warnings {
         warnings.add("This file contains invalid UTF8",
                      &Info {
                          path: path.to_path_buf(),
-                         line: 0,
-                         snippet: "",
+                         line: None,
+                         snippet: None,
                      });
         return warnings;
     }
@@ -359,6 +382,17 @@ fn examine(config: &Config, path: &Path) -> Warnings {
     // TODO ensure stuff is ASCII manually
     clean_cpp_file_content(config, &mut file_content);
 
+    let mut test_batch = vec![];
+
+    //select all tests that should run on this file
+    for test in &config.tests {
+        if test.runs_on_path(&path) {
+            test_batch.push(test);
+        }
+    }
+    
+    let mut fail_counts = vec![0; test_batch.len()];
+
     for line in file_content.split('\n') {
         line_number += 1;
 
@@ -369,14 +403,34 @@ fn examine(config: &Config, path: &Path) -> Warnings {
         // TODO //add a tab at the start to make pre-whitespaces coherent
         let info = Info {
             path: path.to_path_buf(),
-            line: line_number,
-            snippet: line,
+            line: Some(line_number),
+            snippet: Some(line),
         };
 
-        for test in &config.tests {
-            if test.run(line, in_header, in_class, path) {
-                warnings.add(&test.error, &info);
-            }
+        for i in 0..test_batch.len() {
+            let test = &test_batch[i];
+            if test.run(line, in_header, in_class) {
+                fail_counts[i] += 1;
+
+                //failure mode #1: we went over the exact count required
+                if fail_counts[i] > test.expected_fails.exactly {
+                    warnings.add(&test.error, &info);
+                }
+            }       
+        }
+    }
+
+    //failure mode #2: there were not enough failures. Ha!
+    for i in 0..test_batch.len() {
+        let test = &test_batch[i];
+        if fail_counts[i] < test.expected_fails.exactly {
+            let info = Info {
+                path: path.to_path_buf(),
+                line: None,
+                snippet: None,
+            };
+
+            warnings.add(&test.error, &info);
         }
     }
 
@@ -392,7 +446,9 @@ fn examine(config: &Config, path: &Path) -> Warnings {
 
             for (_, list) in &mut warnings.map {
                 for w in list {
-                    w.blame = Some(lines[w.line].to_owned());
+                    if let Some(line) = w.line {
+                        w.blame = Some(lines[line].to_owned());
+                    }
                 }
             }
         }
