@@ -1,3 +1,2 @@
-*.lock
 target/
 *.VC.db
