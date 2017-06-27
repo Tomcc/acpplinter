@@ -485,8 +485,12 @@ fn run<W: Write>(config: Config, output: &mut W) -> usize {
 
     let count = warnings.map.iter().fold(0, |c, (_, v)| c + v.len());
     write!(output, "{}", warnings).unwrap();
-    writeln!(output, "Found {} issues!", count).unwrap();
-
+    if count == 1 {
+        writeln!(output, "Found 1 issue!").unwrap();
+    }
+    else {
+        writeln!(output, "Found {} issues!", count).unwrap();
+    }
     count
 }
 
