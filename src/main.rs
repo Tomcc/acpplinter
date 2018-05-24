@@ -288,6 +288,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
         SkipLine,
         Preprocessor,
         String,
+        Char,
         MultiLine,
     }
 
@@ -305,6 +306,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
                     State::SkipLine
                 }
                 State::Code if config.remove_strings && cur == '"' => State::String,
+                State::Code if config.remove_strings && cur == '\'' => State::Char,
                 State::Code if config.remove_comments && cur == '/' && next == '*' => {
                     State::MultiLine
                 }
@@ -327,6 +329,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
                     State::String
                 }
                 State::String if cur == '"' => State::Code,
+                State::Char if cur == '\'' => State::Code,
                 State::MultiLine if cur == '*' && next == '/' => State::Code,
                 _ => {
                     bytes[i] = 'X' as u8;
@@ -348,12 +351,14 @@ fn walk(path: &Path, paths: &mut Vec<PathBuf>) {
                 paths.push(entry.path().to_path_buf());
             }
         }
+    } else if metadata(path).unwrap().is_file() {
+        paths.push(path.to_path_buf());
     } else {
         println!("Cannot find folder {:?}", path);
     }
 }
 
-fn examine(config: &Config, path: &Path) -> Warnings {
+fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: bool) -> Warnings {
     let mut warnings = Warnings::default();
 
     let mut file_content = String::new();
@@ -382,6 +387,16 @@ fn examine(config: &Config, path: &Path) -> Warnings {
     // TODO ensure stuff is ASCII manually
     clean_cpp_file_content(config, &mut file_content);
 
+    if replace_original_with_preprocessed {
+        // debug option: print out whatever this file looks like after cleaning
+        // let out_path = append_to_extension(path.to_owned(), ".preproc");
+        let out_path = path;
+
+        println!("{:?}", out_path);
+        let mut outfile = File::create(out_path).unwrap();
+        outfile.write(file_content.as_bytes()).unwrap();
+    }
+
     let mut test_batch = vec![];
 
     //select all tests that should run on this file
@@ -393,7 +408,7 @@ fn examine(config: &Config, path: &Path) -> Warnings {
     
     let mut fail_counts = vec![0; test_batch.len()];
 
-    for line in file_content.split('\n') {
+    for line in file_content.lines() {
         line_number += 1;
 
         if !in_class && config.class_regex.is_match(line) {
@@ -457,7 +472,7 @@ fn examine(config: &Config, path: &Path) -> Warnings {
     warnings
 }
 
-fn run<W: Write>(config: Config, output: &mut W) -> usize {
+fn run<W: Write>(config: Config, output: &mut W, replace_original_with_preprocessed: bool) -> usize {
     let mut paths: Vec<PathBuf> = vec![];
     let pool = ThreadPool::new(num_cpus::get());
 
@@ -474,7 +489,7 @@ fn run<W: Write>(config: Config, output: &mut W) -> usize {
             let config = config.clone();
             let sender = sender.clone();
 
-            pool.execute(move || { sender.send(examine(&config, &path)).unwrap(); });
+            pool.execute(move || { sender.send(examine(&config, &path, replace_original_with_preprocessed)).unwrap(); });
         }
     }
 
@@ -530,6 +545,9 @@ fn main() {
             .short("o")
             .long("output")
             .takes_value(true))
+        .arg(Arg::with_name("replace-original-with-preprocessed")
+            .help("[dev option] Pass in this flag if you want to see what the intermediate files look like.")
+            .long("replace-original-with-preprocessed"))
         .get_matches();
 
     let path = PathBuf::from(matches.value_of("JSON_PATH").unwrap());
@@ -544,6 +562,8 @@ fn main() {
         None => to_absolute_path(&path).unwrap().parent().unwrap().to_path_buf(),
     };
 
+    let replace_original_with_preprocessed = matches.is_present("replace-original-with-preprocessed");
+
     println!("Running acpplinter {}", VERSION);
 
     let mut output = open_output(matches.value_of("output"));
@@ -556,7 +576,7 @@ fn main() {
 
         match json::decode::<ConfigDesc>(file_content.as_ref()) {
             Ok(desc) => {
-                if run(Config::from_desc(desc), &mut output) == 0 {
+                if run(Config::from_desc(desc), &mut output, replace_original_with_preprocessed) == 0 {
                     process::exit(0);
                 } else {
                     process::exit(1);
