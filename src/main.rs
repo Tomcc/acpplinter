@@ -294,7 +294,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
     let mut state = State::Code;
     unsafe {
         // because as_mut_vec ignores UTF8, lol
-        let mut bytes = file_content.as_mut_vec();
+        let bytes = file_content.as_bytes_mut();
         let mut i = 0;
         while i < bytes.len() - 1 {
             let cur = bytes[i] as char;
