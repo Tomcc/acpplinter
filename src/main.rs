@@ -1,24 +1,24 @@
-extern crate threadpool;
+extern crate clap;
 extern crate num_cpus;
 extern crate regex;
 extern crate rustc_serialize;
-extern crate clap;
+extern crate threadpool;
 
-use clap::{Arg, App};
-use threadpool::ThreadPool;
-use std::path::{Path, PathBuf};
-use std::env;
-use rustc_serialize::json;
-use std::io::prelude::*;
-use std::io;
-use std::fs::File;
+use clap::{App, Arg};
 use regex::Regex;
-use std::fs::{read_dir, metadata};
+use rustc_serialize::json;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::env;
 use std::fmt;
+use std::fs::File;
+use std::fs::{metadata, read_dir};
+use std::io;
+use std::io::prelude::*;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::mpsc;
-use std::borrow::Cow;
+use threadpool::ThreadPool;
 
 fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
     let canonical = try!(std::fs::canonicalize(path));
@@ -32,7 +32,8 @@ fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
 }
 
 fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
-    strings.iter()
+    strings
+        .iter()
         .map(|string| Regex::new(string.as_ref()).unwrap())
         .collect()
 }
@@ -79,28 +80,27 @@ impl Warning {
             snippet: match info.snippet {
                 Some(snippet) => Some(snippet.to_owned()),
                 None => None,
-            }
+            },
         }
     }
 }
 
 impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-
         write!(f, "\t")?;
 
         if let Some(ref blame) = self.blame {
             write!(f, "{}\t\t{}", blame, self.snippet.as_ref().unwrap()) //snippet must exist if there is a blame
-        }
-        else {
+        } else {
             if let Some(ref line) = self.line {
-                write!(f, "{}:{}\t\t{}", 
+                write!(
+                    f,
+                    "{}:{}\t\t{}",
                     self.path.display(),
                     line,
-                    self.snippet.as_ref().unwrap()  //snippet must exist if there is a line
+                    self.snippet.as_ref().unwrap() //snippet must exist if there is a line
                 )
-            }
-            else {
+            } else {
                 write!(f, "{}", self.path.display())
             }
         }
@@ -115,7 +115,8 @@ struct Warnings {
 impl Warnings {
     fn add(&mut self, message: &str, info: &Info) {
         if !self.map.contains_key(message) {
-            self.map.insert(message.to_owned(), vec![Warning::new(info)]);
+            self.map
+                .insert(message.to_owned(), vec![Warning::new(info)]);
         } else {
             self.map.get_mut(message).unwrap().push(Warning::new(info));
         }
@@ -275,12 +276,14 @@ impl Config {
     }
 }
 
-fn clean_cpp_file_content(config: &Config, file_content: &mut String) {
+fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_safe: bool) {
     assert!(file_content.len() > 0);
 
     //remove all lines containing a safe tag
-    if let Cow::Owned(modified) = config.safe_tag_regex.replace_all(&file_content, "") {
-        *file_content = modified.to_owned();
+    if !ignore_safe {
+        if let Cow::Owned(modified) = config.safe_tag_regex.replace_all(&file_content, "") {
+            *file_content = modified.to_owned();
+        }
     }
 
     enum State {
@@ -358,7 +361,12 @@ fn walk(path: &Path, paths: &mut Vec<PathBuf>) {
     }
 }
 
-fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: bool) -> Warnings {
+fn examine(
+    config: &Config,
+    path: &Path,
+    replace_original_with_preprocessed: bool,
+    ignore_safe: bool,
+) -> Warnings {
     let mut warnings = Warnings::default();
 
     let mut file_content = String::new();
@@ -371,12 +379,14 @@ fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: boo
     let result = file.read_to_string(&mut file_content);
 
     if result.is_err() {
-        warnings.add("This file contains invalid UTF8",
-                     &Info {
-                         path: path.to_path_buf(),
-                         line: None,
-                         snippet: None,
-                     });
+        warnings.add(
+            "This file contains invalid UTF8",
+            &Info {
+                path: path.to_path_buf(),
+                line: None,
+                snippet: None,
+            },
+        );
         return warnings;
     }
 
@@ -385,7 +395,7 @@ fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: boo
     }
 
     // TODO ensure stuff is ASCII manually
-    clean_cpp_file_content(config, &mut file_content);
+    clean_cpp_file_content(config, &mut file_content, ignore_safe);
 
     if replace_original_with_preprocessed {
         // debug option: print out whatever this file looks like after cleaning
@@ -405,7 +415,7 @@ fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: boo
             test_batch.push(test);
         }
     }
-    
+
     let mut fail_counts = vec![0; test_batch.len()];
 
     for line in file_content.lines() {
@@ -431,7 +441,7 @@ fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: boo
                 if fail_counts[i] > test.expected_fails.exactly {
                     warnings.add(&test.error, &info);
                 }
-            }       
+            }
         }
     }
 
@@ -472,7 +482,12 @@ fn examine(config: &Config, path: &Path, replace_original_with_preprocessed: boo
     warnings
 }
 
-fn run<W: Write>(config: Config, output: &mut W, replace_original_with_preprocessed: bool) -> usize {
+fn run<W: Write>(
+    config: Config,
+    output: &mut W,
+    replace_original_with_preprocessed: bool,
+    ignore_safe: bool,
+) -> usize {
     let mut paths: Vec<PathBuf> = vec![];
     let pool = ThreadPool::new(num_cpus::get());
 
@@ -489,21 +504,32 @@ fn run<W: Write>(config: Config, output: &mut W, replace_original_with_preproces
             let config = config.clone();
             let sender = sender.clone();
 
-            pool.execute(move || { sender.send(examine(&config, &path, replace_original_with_preprocessed)).unwrap(); });
+            pool.execute(move || {
+                sender
+                    .send(examine(
+                        &config,
+                        &path,
+                        replace_original_with_preprocessed,
+                        ignore_safe,
+                    ))
+                    .unwrap();
+            });
         }
     }
 
-    let warnings = receiver.iter().take(task_count).fold(Warnings::default(), |mut w, cur| {
-        w.add_map(cur);
-        w
-    });
+    let warnings = receiver
+        .iter()
+        .take(task_count)
+        .fold(Warnings::default(), |mut w, cur| {
+            w.add_map(cur);
+            w
+        });
 
     let count = warnings.map.iter().fold(0, |c, (_, v)| c + v.len());
     write!(output, "{}", warnings).unwrap();
     if count == 1 {
         writeln!(output, "Found 1 issue!").unwrap();
-    }
-    else {
+    } else {
         writeln!(output, "Found {} issues!", count).unwrap();
     }
     count
@@ -548,6 +574,9 @@ fn main() {
         .arg(Arg::with_name("replace-original-with-preprocessed")
             .help("[dev option] Pass in this flag if you want to see what the intermediate files look like.")
             .long("replace-original-with-preprocessed"))
+        .arg(Arg::with_name("ignore-safe")
+            .help("Ignore /*safe*/ tags and show them anyway in the output")
+            .long("ignore-safe"))
         .get_matches();
 
     let path = PathBuf::from(matches.value_of("JSON_PATH").unwrap());
@@ -559,10 +588,17 @@ fn main() {
 
     let rootpath = match matches.value_of("root_path") {
         Some(value) => PathBuf::from(value),
-        None => to_absolute_path(&path).unwrap().parent().unwrap().to_path_buf(),
+        None => to_absolute_path(&path)
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf(),
     };
 
-    let replace_original_with_preprocessed = matches.is_present("replace-original-with-preprocessed");
+    let replace_original_with_preprocessed =
+        matches.is_present("replace-original-with-preprocessed");
+
+    let ignore_safe = matches.is_present("ignore-safe");
 
     println!("Running acpplinter {}", VERSION);
 
@@ -576,7 +612,13 @@ fn main() {
 
         match json::decode::<ConfigDesc>(file_content.as_ref()) {
             Ok(desc) => {
-                if run(Config::from_desc(desc), &mut output, replace_original_with_preprocessed) == 0 {
+                if run(
+                    Config::from_desc(desc),
+                    &mut output,
+                    replace_original_with_preprocessed,
+                    ignore_safe,
+                ) == 0
+                {
                     process::exit(0);
                 } else {
                     process::exit(1);
