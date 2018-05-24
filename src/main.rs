@@ -266,7 +266,7 @@ impl Config {
                 .into_iter()
                 .map(|td| Test::from_desc(td))
                 .collect(),
-            safe_tag_regex: Regex::new(".*/\\*safe\\*/.*").unwrap(),
+            safe_tag_regex: Regex::new("^.*/\\*safe\\*/.*$").unwrap(),
             class_regex: Regex::new("(^|\\s)+class\\s+[^;]*$").unwrap(),
         }
     }
@@ -276,12 +276,16 @@ impl Config {
     }
 }
 
+fn is_newline(c: char) -> bool {
+    c == '\n' || c == '\r'
+}
+
 fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_safe: bool) {
     assert!(file_content.len() > 0);
 
     //remove all lines containing a safe tag
     if !ignore_safe {
-        if let Cow::Owned(modified) = config.safe_tag_regex.replace_all(&file_content, "") {
+        if let Cow::Owned(modified) = config.safe_tag_regex.replace_all(&file_content, "\n") {
             *file_content = modified.to_owned();
         }
     }
@@ -316,14 +320,14 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_saf
                 State::Code if cur == '#' => State::Preprocessor,
 
                 //Preprocessor state: remain in the state until \n is found
-                State::Preprocessor if next == '\n' => State::Code,
+                State::Preprocessor if is_newline(next) => State::Code,
                 State::Preprocessor => State::Preprocessor,
 
                 //unknown character: remain in Code state
                 State::Code => State::Code,
 
                 //after this line, all iterations on one of these states cause X to be written in replacement
-                State::SkipLine if next == '\n' => State::Code,
+                State::SkipLine if is_newline(next) => State::Code,
                 State::String if cur == '\\' => {
                     //escape char, skip next
                     bytes[i] = 'X' as u8;
@@ -334,6 +338,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_saf
                 State::String if cur == '"' => State::Code,
                 State::Char if cur == '\'' => State::Code,
                 State::MultiLine if cur == '*' && next == '/' => State::Code,
+                State::MultiLine if is_newline(cur) => State::MultiLine,
                 _ => {
                     bytes[i] = 'X' as u8;
                     state
