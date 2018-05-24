@@ -361,6 +361,14 @@ fn walk(path: &Path, paths: &mut Vec<PathBuf>) {
     }
 }
 
+fn output_preprocessed(path: &Path, file_content: &str) {
+    // debug option: print out whatever this file looks like after cleaning
+    // let out_path = append_to_extension(path.to_owned(), ".preproc");
+    let out_path = path;
+    let mut outfile = File::create(out_path).unwrap();
+    outfile.write(file_content.as_bytes()).unwrap();
+}
+
 fn examine(
     config: &Config,
     path: &Path,
@@ -394,18 +402,18 @@ fn examine(
         return warnings;
     }
 
+    let original_lines = file_content.lines().count();
+
     // TODO ensure stuff is ASCII manually
     clean_cpp_file_content(config, &mut file_content, ignore_safe);
 
-    if replace_original_with_preprocessed {
-        // debug option: print out whatever this file looks like after cleaning
-        // let out_path = append_to_extension(path.to_owned(), ".preproc");
-        let out_path = path;
-
-        println!("{:?}", out_path);
-        let mut outfile = File::create(out_path).unwrap();
-        outfile.write(file_content.as_bytes()).unwrap();
+    if original_lines != file_content.lines().count() {
+        output_preprocessed(path, &file_content);
+        println!("Something went wrong! The preprocessed file has less lines");
+        std::process::exit(1);
     }
+
+    if replace_original_with_preprocessed {}
 
     let mut test_batch = vec![];
 
@@ -487,9 +495,10 @@ fn run<W: Write>(
     output: &mut W,
     replace_original_with_preprocessed: bool,
     ignore_safe: bool,
+    j: usize,
 ) -> usize {
     let mut paths: Vec<PathBuf> = vec![];
-    let pool = ThreadPool::new(num_cpus::get());
+    let pool = ThreadPool::new(j);
 
     for root in &config.roots {
         walk(root.as_ref(), &mut paths);
@@ -549,6 +558,8 @@ fn open_output(maybe_path: Option<&str>) -> Box<Write> {
 fn main() {
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
+    let cpu_num_string = num_cpus::get().to_string();
+
     let matches = App::new("A cpp linter")
         .version(VERSION)
         .about("Still pretty incomplete")
@@ -577,6 +588,13 @@ fn main() {
         .arg(Arg::with_name("ignore-safe")
             .help("Ignore /*safe*/ tags and show them anyway in the output")
             .long("ignore-safe"))
+        .arg(Arg::with_name("job-count")
+            .help("Override how many threads should be used")
+            .value_name("Job count")
+            .long("job-count")
+            .short("j")
+            .takes_value(true)
+            .default_value(&cpu_num_string))
         .get_matches();
 
     let path = PathBuf::from(matches.value_of("JSON_PATH").unwrap());
@@ -600,7 +618,13 @@ fn main() {
 
     let ignore_safe = matches.is_present("ignore-safe");
 
-    println!("Running acpplinter {}", VERSION);
+    let j = matches
+        .value_of("job-count")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap_or(num_cpus::get());
+        
+    println!("Running acpplinter {} with {} threads", VERSION, j);
 
     let mut output = open_output(matches.value_of("output"));
 
@@ -617,6 +641,7 @@ fn main() {
                     &mut output,
                     replace_original_with_preprocessed,
                     ignore_safe,
+                    j,
                 ) == 0
                 {
                     process::exit(0);
