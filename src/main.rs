@@ -266,7 +266,7 @@ impl Config {
                 .into_iter()
                 .map(|td| Test::from_desc(td))
                 .collect(),
-            safe_tag_regex: Regex::new("^.*/\\*safe\\*/.*$").unwrap(),
+            safe_tag_regex: Regex::new(".*/\\*safe\\*/.*(\\r\\n|\\r|\\n)").unwrap(),
             class_regex: Regex::new("(^|\\s)+class\\s+[^;]*$").unwrap(),
         }
     }
@@ -276,8 +276,47 @@ impl Config {
     }
 }
 
-fn is_newline(c: char) -> bool {
-    c == '\n' || c == '\r'
+fn is_newline(c: u8) -> bool {
+    c == '\n' as u8 || c == '\r' as u8
+}
+
+fn lookahead_delim(bytes: &[u8], delim: &[u8], start_idx: usize) -> bool {
+    for j in 0..delim.len() {
+        if bytes[start_idx + j] != delim[j] {
+            return false;
+        }
+    }
+    true
+}
+
+fn remove_raw_string_literal(bytes: &mut [u8], start_idx: usize) -> usize {
+    //find the delimiter
+    let mut delim = vec![];
+    let mut idx = start_idx;
+
+    while idx < bytes.len() {
+        let c = bytes[idx];
+        idx += 1;
+        if c == '(' as u8 {
+            break;
+        }
+        delim.push(c);
+    }
+    delim.push(')' as u8);
+    delim.push('\"' as u8);
+
+    //now keep going and find the first position where the delimiter starts
+    while idx < bytes.len() - delim.len() + 1 {
+        if lookahead_delim(bytes, &delim, idx) {
+            idx += delim.len();
+            break;
+        } else if !is_newline(bytes[idx]) {
+            bytes[idx] = 'X' as u8;
+        }
+        idx += 1;
+    }
+
+    idx
 }
 
 fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_safe: bool) {
@@ -305,19 +344,23 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_saf
         let bytes = file_content.as_bytes_mut();
         let mut i = 0;
         while i < bytes.len() - 1 {
-            let cur = bytes[i] as char;
-            let next = bytes[i + 1] as char;
+            let cur = bytes[i];
+            let next = bytes[i + 1];
 
             state = match state {
-                State::Code if config.remove_comments && cur == '/' && next == '/' => {
+                State::Code if config.remove_comments && cur == '/' as u8 && next == '/' as u8 => {
                     State::SkipLine
                 }
-                State::Code if config.remove_strings && cur == '"' => State::String,
-                State::Code if config.remove_strings && cur == '\'' => State::Char,
-                State::Code if config.remove_comments && cur == '/' && next == '*' => {
+                State::Code if config.remove_strings && cur == '"' as u8 => State::String,
+                State::Code if config.remove_strings && cur == '\'' as u8 => State::Char,
+                State::Code if config.remove_comments && cur == '/' as u8 && next == '*' as u8 => {
                     State::MultiLine
                 }
-                State::Code if cur == '#' => State::Preprocessor,
+                State::Code if cur == '#' as u8 => State::Preprocessor,
+                State::Code if cur == 'R' as u8 && next == '"' as u8 => {
+                    i = remove_raw_string_literal(bytes, i + 2);
+                    State::Code
+                }
 
                 //Preprocessor state: remain in the state until \n is found
                 State::Preprocessor if is_newline(next) => State::Code,
@@ -328,16 +371,23 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_saf
 
                 //after this line, all iterations on one of these states cause X to be written in replacement
                 State::SkipLine if is_newline(next) => State::Code,
-                State::String if cur == '\\' => {
+                State::String if cur == '\\' as u8 => {
                     //escape char, skip next
                     bytes[i] = 'X' as u8;
                     i += 1;
-                    bytes[i] = 'X' as u8;
                     State::String
                 }
-                State::String if cur == '"' => State::Code,
-                State::Char if cur == '\'' => State::Code,
-                State::MultiLine if cur == '*' && next == '/' => State::Code,
+                State::String if cur == '"' as u8 => State::Code,
+
+                State::Char if cur == '\\' as u8 => {
+                    //escape char, skip next
+                    bytes[i] = 'X' as u8;
+                    i += 1;
+                    State::Char
+                }
+                State::Char if cur == '\'' as u8 => State::Code,
+
+                State::MultiLine if cur == '*' as u8 && next == '/' as u8 => State::Code,
                 State::MultiLine if is_newline(cur) => State::MultiLine,
                 _ => {
                     bytes[i] = 'X' as u8;
@@ -379,6 +429,7 @@ fn examine(
     path: &Path,
     replace_original_with_preprocessed: bool,
     ignore_safe: bool,
+    sanity_checks: bool,
 ) -> Warnings {
     let mut warnings = Warnings::default();
 
@@ -407,18 +458,25 @@ fn examine(
         return warnings;
     }
 
-    let original_lines = file_content.lines().count();
+    let original_lines = if sanity_checks {
+        file_content.lines().count()
+    } else {
+        0
+    };
 
     // TODO ensure stuff is ASCII manually
     clean_cpp_file_content(config, &mut file_content, ignore_safe);
 
-    if original_lines != file_content.lines().count() {
-        output_preprocessed(path, &file_content);
-        println!("Something went wrong! The preprocessed file has less lines");
-        std::process::exit(1);
+    if sanity_checks {
+        if original_lines != file_content.lines().count() {
+            output_preprocessed(path, &file_content);
+            println!("Something went wrong! The preprocessed file has less lines");
+        }
     }
 
-    if replace_original_with_preprocessed {}
+    if replace_original_with_preprocessed {
+        output_preprocessed(path, &file_content);
+    }
 
     let mut test_batch = vec![];
 
@@ -511,6 +569,8 @@ fn run<W: Write>(
 
     let (sender, receiver) = mpsc::channel();
 
+    let sanity_checks = false;
+
     let mut task_count = 0;
     for path in paths {
         if config.should_check(&path) {
@@ -525,6 +585,7 @@ fn run<W: Write>(
                         &path,
                         replace_original_with_preprocessed,
                         ignore_safe,
+                        sanity_checks,
                     ))
                     .unwrap();
             });
@@ -628,7 +689,7 @@ fn main() {
         .unwrap()
         .parse::<usize>()
         .unwrap_or(num_cpus::get());
-        
+
     println!("Running acpplinter {} with {} threads", VERSION, j);
 
     let mut output = open_output(matches.value_of("output"));
