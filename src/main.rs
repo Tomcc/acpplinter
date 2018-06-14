@@ -31,11 +31,19 @@ fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
     Ok(root)
 }
 
-fn to_regex_array(strings: &Vec<String>) -> Vec<Regex> {
-    strings
-        .iter()
-        .map(|string| Regex::new(string.as_ref()).unwrap())
-        .collect()
+fn to_single_regex(strings: &Vec<String>) -> Option<Regex> {
+    if strings.is_empty() {
+        return None;
+    }
+    let mut full_regex_string = String::new();
+    for string in strings {
+        if !full_regex_string.is_empty() {
+            full_regex_string.push('|');
+        }
+        full_regex_string.push_str(string);
+    }
+
+    Some(Regex::new(&full_regex_string).unwrap())
 }
 
 fn to_unix_string(path: &Path) -> Cow<str> {
@@ -48,13 +56,11 @@ fn to_unix_string(path: &Path) -> Cow<str> {
     return string;
 }
 
-fn matches_any(path: &Path, exps: &Vec<Regex>) -> bool {
-    for r in exps {
-        if r.is_match(&to_unix_string(path)) {
-            return true;
-        }
+fn matches_maybe(path: &Path, regex: &Option<Regex>) -> bool {
+    if let Some(r) = regex {
+        return r.is_match(&to_unix_string(path));
     }
-    return false;
+    false
 }
 
 struct Info<'a> {
@@ -187,36 +193,39 @@ struct ConfigDesc {
 
 #[derive(Clone)]
 struct Test {
-    fail: Vec<Regex>,
-    allow: Vec<Regex>,
+    fail: Regex,
+    allow: Option<Regex>,
     error: String,
     class_only: bool,
     header_only: bool,
-    include_paths: Vec<Regex>,
-    exclude_paths: Vec<Regex>,
+    include_paths: Option<Regex>,
+    exclude_paths: Option<Regex>,
     expected_fails: ExpectedFailsDesc,
 }
 
 impl Test {
     fn from_desc(desc: TestDesc) -> Self {
         Test {
-            fail: to_regex_array(&desc.fail),
-            allow: to_regex_array(&desc.allow.unwrap_or_default()),
+            fail: to_single_regex(&desc.fail).unwrap(),
+            allow: to_single_regex(&desc.allow.unwrap_or_default()),
             error: desc.error.clone(),
             class_only: desc.classOnly.unwrap_or(false),
             header_only: desc.headerOnly.unwrap_or(false),
-            include_paths: to_regex_array(&desc.include_paths.unwrap_or_default()),
-            exclude_paths: to_regex_array(&desc.exclude_paths.unwrap_or_default()),
+            include_paths: to_single_regex(&desc.include_paths.unwrap_or_default()),
+            exclude_paths: to_single_regex(&desc.exclude_paths.unwrap_or_default()),
             expected_fails: desc.expected_fails.unwrap_or_default(),
         }
     }
 
     fn runs_on_path(&self, path: &Path) -> bool {
-        if self.include_paths.len() > 0 && !matches_any(path, &self.include_paths) {
+        //if there is a special include path, it must match
+        let has_include = self.include_paths.is_some();
+        if has_include && !matches_maybe(path, &self.include_paths) {
             return false;
         }
 
-        if self.exclude_paths.len() > 0 && matches_any(path, &self.exclude_paths) {
+        //if there is a special exclude path, it must *not* match
+        if matches_maybe(path, &self.exclude_paths) {
             return false;
         }
         return true;
@@ -227,25 +236,23 @@ impl Test {
             return false;
         }
 
-        for fail in &self.fail {
-            if fail.is_match(line) {
-                for allow in &self.allow {
-                    if allow.is_match(line) {
-                        return false;
-                    }
+        if self.fail.is_match(line) {
+            if let Some(ref a) = self.allow {
+                if a.is_match(line) {
+                    return false;
                 }
-                return true;
             }
+            return true;
         }
-        return false;
+        false
     }
 }
 
 #[derive(Clone)]
 struct Config {
     roots: Vec<String>,
-    excludes: Vec<Regex>,
-    includes: Vec<Regex>,
+    excludes: Option<Regex>,
+    includes: Option<Regex>,
     remove_strings: bool,
     remove_comments: bool,
     tests: Vec<Test>,
@@ -258,11 +265,12 @@ impl Config {
     fn from_desc(desc: ConfigDesc) -> Self {
         Config {
             roots: desc.roots,
-            excludes: to_regex_array(&desc.excludes.unwrap_or_default()),
-            includes: to_regex_array(&desc.includes.unwrap_or_default()),
+            excludes: to_single_regex(&desc.excludes.unwrap_or_default()),
+            includes: to_single_regex(&desc.includes.unwrap_or_default()),
             remove_strings: desc.removeStrings.unwrap_or(true),
             remove_comments: desc.removeComments.unwrap_or(true),
-            tests: desc.tests
+            tests: desc
+                .tests
                 .into_iter()
                 .map(|td| Test::from_desc(td))
                 .collect(),
@@ -272,7 +280,7 @@ impl Config {
     }
 
     fn should_check(&self, path: &Path) -> bool {
-        matches_any(&path, &self.includes) && !matches_any(&path, &self.excludes)
+        matches_maybe(&path, &self.includes) && !matches_maybe(&path, &self.excludes)
     }
 }
 
