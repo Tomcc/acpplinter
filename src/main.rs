@@ -726,6 +726,7 @@ fn main() {
             Err(e) => {
                 println!("Invalid JSON");
                 println!("{:?}", e);
+                process::exit(1);
             }
         }
     } else {
