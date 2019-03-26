@@ -616,7 +616,8 @@ fn open_output(maybe_path: Option<&str>) -> Box<Write> {
 fn main() {
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    let cpu_num_string = num_cpus::get().to_string();
+    let cpu_count = num_cpus::get();
+    let cpu_num_string = cpu_count.to_string();
 
     let matches = App::new("A cpp linter")
         .version(VERSION)
@@ -658,7 +659,7 @@ fn main() {
     let path = PathBuf::from(matches.value_of("JSON_PATH").unwrap());
 
     if !path.is_file() {
-        println!("{} is not a file, or couldn't be found!", path.display());
+        eprintln!("{} is not a file, or couldn't be found!", path.display());
         process::exit(1);
     }
 
@@ -678,9 +679,8 @@ fn main() {
 
     let j = matches
         .value_of("job-count")
-        .unwrap()
-        .parse::<usize>()
-        .unwrap_or(num_cpus::get());
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(cpu_count);
 
     println!("Running acpplinter {} with {} threads", VERSION, j);
 
