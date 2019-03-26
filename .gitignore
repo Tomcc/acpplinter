@@ -1,3 +1,4 @@
 target/
 *.VC.db
 .vscode/*
+/Cargo.lock

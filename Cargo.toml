@@ -1,11 +1,13 @@
 [package]
 name = "acpplinter"
-version = "0.7.1"
+version = "0.7.2"
 authors = ["Tommaso Checchi <tommaso.checchi1@gmail.com>"]
+edition = "2018"
 
 [dependencies]
-regex = "*"
-rustc-serialize = "*"
-threadpool = "*"
-num_cpus = "*"
-clap = "*"
+regex = "1.1"
+rustc-serialize = "0.3"
+threadpool = "1.7"
+num_cpus = "1.10"
+clap = "2.32"
+walkdir = "2.2"
