@@ -123,15 +123,8 @@ impl Warnings {
     }
 
     fn add_map(&mut self, other: Warnings) {
-        for (k, v) in other.map {
-            if let Some(vec) = self.map.get_mut(&k) {
-                for elem in v {
-                    vec.push(elem);
-                }
-                return;
-            }
-
-            self.map.insert(k.clone(), v);
+        for (k, mut v) in other.map {
+            self.map.entry(k).or_insert_with(Vec::new).append(&mut v);
         }
     }
 
