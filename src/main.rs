@@ -1,9 +1,3 @@
-extern crate clap;
-extern crate num_cpus;
-extern crate regex;
-extern crate rustc_serialize;
-extern crate threadpool;
-
 use clap::{App, Arg};
 use regex::Regex;
 use rustc_serialize::json;
@@ -12,21 +6,21 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs::File;
-use std::fs::{metadata, read_dir};
 use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::mpsc;
 use threadpool::ThreadPool;
+use walkdir::WalkDir;
 
 fn to_absolute_path(path: &Path) -> Result<PathBuf, std::io::Error> {
-    let canonical = try!(std::fs::canonicalize(path));
+    let canonical = std::fs::canonicalize(path)?;
     if canonical.is_absolute() {
         return Ok(canonical);
     }
 
-    let mut root = try!(std::env::current_dir());
+    let mut root = std::env::current_dir()?;
     root.push(&canonical);
     Ok(root)
 }
@@ -130,9 +124,8 @@ impl Warnings {
 
     fn add_map(&mut self, other: Warnings) {
         for (k, v) in other.map {
-            if let Some(mut vec) = self.map.get_mut(&k) {
+            if let Some(vec) = self.map.get_mut(&k) {
                 for elem in v {
-                    //println!("{}", elem);
                     vec.push(elem);
                 }
                 return;
@@ -379,6 +372,7 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_saf
 
                 //after this line, all iterations on one of these states cause X to be written in replacement
                 State::SkipLine if is_newline(next) => State::Code,
+                State::String if is_newline(cur) => State::String,
                 State::String if cur == '\\' as u8 => {
                     //escape char, skip next
                     bytes[i] = 'X' as u8;
@@ -407,23 +401,6 @@ fn clean_cpp_file_content(config: &Config, file_content: &mut String, ignore_saf
     }
 }
 
-fn walk(path: &Path, paths: &mut Vec<PathBuf>) {
-    if let Ok(dir_entries) = read_dir(path) {
-        for entry in dir_entries {
-            let entry = entry.unwrap();
-            if metadata(&entry.path()).unwrap().is_dir() {
-                walk(&entry.path(), paths);
-            } else {
-                paths.push(entry.path().to_path_buf());
-            }
-        }
-    } else if metadata(path).unwrap().is_file() {
-        paths.push(path.to_path_buf());
-    } else {
-        println!("Cannot find folder {:?}", path);
-    }
-}
-
 fn output_preprocessed(path: &Path, file_content: &str) {
     // debug option: print out whatever this file looks like after cleaning
     // let out_path = append_to_extension(path.to_owned(), ".preproc");
@@ -447,7 +424,11 @@ fn examine(
     let in_header = path.ends_with(".h");
     let mut line_number = 0;
 
-    let mut file = File::open(&path).unwrap();
+    let mut file = File::open(&path).unwrap_or_else(|e| {
+        eprintln!("{}: {}", path.display(), e);
+        process::exit(1);
+    });
+
     let result = file.read_to_string(&mut file_content);
 
     if result.is_err() {
@@ -478,7 +459,8 @@ fn examine(
     if sanity_checks {
         if original_lines != file_content.lines().count() {
             output_preprocessed(path, &file_content);
-            println!("Something went wrong! The preprocessed file has less lines");
+            eprintln!("Error: lines were lost during preprocessing");
+            eprintln!("File: {}", path.display());
         }
     }
 
@@ -538,7 +520,7 @@ fn examine(
         }
     }
 
-    // if any warning was emitted, see if a blame file is present
+    // if any warning were emitted, see if a blame file is present
     // in which case, attach the blame information to the warnings
     if warnings.len() > 0 {
         let blame_path = path.to_str().unwrap().to_owned() + ".blame";
@@ -572,7 +554,16 @@ fn run<W: Write>(
     let pool = ThreadPool::new(j);
 
     for root in &config.roots {
-        walk(root.as_ref(), &mut paths);
+        for entry in WalkDir::new(root) {
+            if let Ok(entry) = entry {
+                if entry.file_type().is_file() {
+                    paths.push(entry.into_path());
+                }
+            } else {
+                eprintln!("Cannot find a folder in the root list: {}", root);
+                process::exit(1);
+            }
+        }
     }
 
     let (sender, receiver) = mpsc::channel();
@@ -730,7 +721,7 @@ fn main() {
             }
         }
     } else {
-        println!("Cannot open config {}", path.display());
+        eprintln!("Cannot open config {}", path.display());
         process::exit(1);
     }
 }
